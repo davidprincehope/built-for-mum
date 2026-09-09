@@ -78,7 +78,10 @@ export async function runMigrations(): Promise<string[]> {
 }
 
 // CLI entrypoint: `npm run migrate` / `npx tsx src/db/migrate.ts`
-if (require.main === module) {
+const isMain =
+  process.argv[1] &&
+  (process.argv[1].endsWith('migrate.ts') || process.argv[1].endsWith('migrate.js'));
+if (isMain) {
   runMigrations()
     .then(() => process.exit(0))
     .catch((err) => {
