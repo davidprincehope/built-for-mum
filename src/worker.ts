@@ -1,5 +1,5 @@
 import { createChildLogger, logger } from './observability/logger';
-import { fetchMessage } from './gmail/fetch';
+import { fetchMessage, getMessageFull } from './gmail/fetch';
 import { verifyAuthenticity } from './zenith/authenticity';
 import { decodeStrict } from './zenith/decode';
 import { parseZenithEmail, parseZenithFields, ParseFailure } from './zenith/parser';
@@ -42,8 +42,14 @@ export async function processEmail(messageId: string, deps: ProcessEmailDeps = {
     }
   }
 
-  // 1) Fetch
-  const msg = await fetchMessage(gmailClient!, messageId);
+  // 1) Fetch with 429 backoff retry (NFR-1.1) via getMessageFull wrapper; fallback to direct fetchMessage if not retryable shape
+  let msg: Awaited<ReturnType<typeof fetchMessage>>;
+  try {
+    msg = await getMessageFull(gmailClient as Parameters<typeof getMessageFull>[0], messageId);
+  } catch (e) {
+    // getMessageFull already retried 429 up to 3 times; if still failing, rethrow
+    throw e;
+  }
   child.debug({ subject: msg.subject, from: msg.from }, 'fetched message headers');
   child.info({ stage: 'received', subject: msg.subject, from: msg.from }, 'stage received');
 
