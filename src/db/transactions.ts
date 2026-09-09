@@ -1,3 +1,4 @@
+import pg from 'pg';
 import { getPool } from './pool';
 import { logger } from '../observability/logger';
 import { capRawEmail } from '../zenith/validation';
@@ -32,7 +33,20 @@ async function logCappedRawEmailMeta(original: string | null | undefined, capped
 
 export async function insertTransactionAtomically(row: TransactionRow): Promise<'inserted' | 'duplicate'> {
   const pool = getPool();
-  const client = await pool.connect();
+  // Resilience T-5.2: Postgres unavailable — lightweight retry 2x with 100ms backoff only for insert path, not infinite loop
+  let client: pg.PoolClient | null = null;
+  let connectAttempts = 0;
+  while (true) {
+    try {
+      client = await pool.connect();
+      break;
+    } catch (e) {
+      connectAttempts++;
+      if (connectAttempts > 2) throw e;
+      logger.warn({ attempt: connectAttempts, err: e }, 'pg connect failed — retry 100ms');
+      await new Promise((r) => setTimeout(r, 100));
+    }
+  }
   try {
     await client.query('BEGIN');
 

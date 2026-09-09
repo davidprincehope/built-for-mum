@@ -10,6 +10,7 @@ import { insertTransactionAtomically } from './db/transactions';
 import { insertSuspicious } from './db/suspicious';
 import { getPool } from './db/pool';
 import { runMigrations } from './db/migrate';
+import { suspicious as alerterSuspicious, parseFailure as alerterParseFailure } from './alerts/alerter';
 
 function getSenderDomain(fromHeader: string): string {
   const m = fromHeader.match(/@([A-Za-z0-9.-]+\.[A-Za-z]{2,})/);
@@ -44,6 +45,7 @@ export async function processEmail(messageId: string, deps: ProcessEmailDeps = {
   // 1) Fetch
   const msg = await fetchMessage(gmailClient!, messageId);
   child.debug({ subject: msg.subject, from: msg.from }, 'fetched message headers');
+  child.info({ stage: 'received', subject: msg.subject, from: msg.from }, 'stage received');
 
   // Candidate filter before authenticity per RESEARCH: check From domain ∈ ZENITH_SENDER_DOMAINS
   const envDomainsRaw = process.env.ZENITH_SENDER_DOMAINS ?? 'zenithbank.com';
@@ -55,6 +57,7 @@ export async function processEmail(messageId: string, deps: ProcessEmailDeps = {
 
   if (fromDomain && !domains.includes(fromDomain)) {
     child.debug({ fromDomain, domains }, 'non-zenith candidate — ignored');
+    child.info({ stage: 'auth', result: 'ignored_non_zenith' }, 'stage auth ignored non-zenith');
     return 'ignored';
   }
 
@@ -63,13 +66,14 @@ export async function processEmail(messageId: string, deps: ProcessEmailDeps = {
     const isZenith = domains.some((d) => fromLower.includes(d));
     if (!isZenith) {
       child.debug('missing/unknown From domain — ignored');
+      child.info({ stage: 'auth', result: 'ignored_no_domain' }, 'stage auth ignored');
       return 'ignored';
     }
   }
 
   // 2) Authenticity (DKIM-only clause-bound)
   const auth = verifyAuthenticity(msg.authResults);
-  child.info({ auth_pass: auth.pass, auth_domain: auth.domain, auth_reason: auth.reason }, 'auth check');
+  child.info({ stage: 'auth', auth_pass: auth.pass, auth_domain: auth.domain, auth_reason: auth.reason }, 'stage auth check');
 
   if (!auth.pass) {
     const reason = auth.reason;
@@ -82,13 +86,21 @@ export async function processEmail(messageId: string, deps: ProcessEmailDeps = {
       reason,
       raw_email: JSON.stringify({ headers: msg.headers, bodyB64: msg.bodyB64 }),
     });
-    child.warn({ reason, authResult }, 'routed to suspicious_emails');
+    child.warn({ stage: 'auth', reason, authResult }, 'routed to suspicious_emails');
+    try {
+      await alerterSuspicious({ messageId, from: msg.from, reason, authResult });
+    } catch (e) {
+      child.error({ err: e }, 'alerter suspicious failed');
+    }
     return 'suspicious';
   }
 
   // 3) Decode (strict)
   if (!msg.bodyB64) {
-    child.warn('missing bodyB64 — validation_failed');
+    child.warn({ stage: 'parse', reason: 'missing bodyB64' }, 'missing bodyB64 — validation_failed');
+    try {
+      await alerterParseFailure({ messageId, field: 'bodyB64', rawSubject: msg.subject ?? '' });
+    } catch {}
     return 'validation_failed';
   }
 
@@ -96,41 +108,45 @@ export async function processEmail(messageId: string, deps: ProcessEmailDeps = {
   try {
     html = decodeStrict(msg.bodyB64!);
   } catch (e) {
-    child.error({ err: e }, 'strict decode failed');
-    // Per D-09 strictness, treat as validation_failed (format drift) not crash — would be alerted in caller
-    // But per plan, decodeStrict throws strict-decode; we rethrow to allow caller/integration to catch as validation_failed
-    // For processEmail contract, return validation_failed for decode failures if not to crash pipeline
-    // However spec says D-09 strict throws with no fallback; processEmail should treat as validation_failed and alert
-    // We return validation_failed here to avoid unhandled exception killing worker loop
-    child.warn({ err: e }, 'decode failure — validation_failed (format drift)');
+    child.error({ stage: 'parse', err: e }, 'strict decode failed');
+    child.warn({ stage: 'parse', err: e }, 'decode failure — validation_failed (format drift)');
+    try {
+      await alerterParseFailure({ messageId, field: 'decode', rawSubject: msg.subject ?? '' });
+    } catch {}
     return 'validation_failed';
   }
   child.debug({ html_len: html.length }, 'decoded html');
+  child.info({ stage: 'parse', html_len: html.length }, 'stage parse decoded');
 
   // 4) Parse — hardened per-field parser (throws ParseFailure on missing required)
   let parsed: ReturnType<typeof parseZenithEmail>;
-  let kvFallback: Record<string, string> = {};
   try {
     parsed = parseZenithEmail(html);
-    kvFallback = parsed.rawTable;
   } catch (e) {
     if (e instanceof ParseFailure) {
-      child.warn({ err: e, field: e.field }, 'parse failure — validation_failed (format drift)');
+      child.warn({ stage: 'parse', err: e, field: e.field }, 'parse failure — validation_failed (format drift)');
+      try {
+        await alerterParseFailure({ messageId, field: e.field, rawSubject: msg.subject ?? '' });
+      } catch {}
       return 'validation_failed';
     }
-    // Try fallback to lenient parseZenithFields for classification before failing
     try {
-      kvFallback = parseZenithFields(html);
+      parseZenithFields(html);
     } catch {}
-    child.warn({ err: e }, 'parse failure — validation_failed');
+    child.warn({ stage: 'parse', err: e }, 'parse failure — validation_failed');
+    try {
+      await alerterParseFailure({ messageId, field: 'unknown', rawSubject: msg.subject ?? '' });
+    } catch {}
     return 'validation_failed';
   }
   child.debug({ parsed }, 'parsed fields');
+  child.info({ stage: 'parse', reference: parsed.referenceCode, transactionType: parsed.transactionType }, 'stage parse ok');
 
   // 5) Classify — credit only (D-06)
   const credit = isCreditTransaction(msg.subject, parsed.transactionType);
   if (!credit) {
     child.debug({ subject: msg.subject, transactionType: parsed.transactionType }, 'non-credit transaction — ignored (D-06)');
+    child.info({ stage: 'validation', result: 'ignored_non_credit' }, 'stage validation ignored non-credit');
     return 'ignored';
   }
 
@@ -140,9 +156,6 @@ export async function processEmail(messageId: string, deps: ProcessEmailDeps = {
     child.warn({ email_message_id: messageId, description: parsed.description }, 'unknown description family — lenient store raw as sender (D-10)');
   }
   const senderName = senderRes.senderName || parsed.description.split('/')[0]?.trim() || 'UNKNOWN';
-
-  // Preserve masked account handling: sender_account stays masked as-is (D-08)
-  // If senderRes provides senderAccount (future), use it; otherwise use accountNumber from parser
 
   const validationInput = buildValidationInput({
     fields: {
@@ -160,7 +173,6 @@ export async function processEmail(messageId: string, deps: ProcessEmailDeps = {
     senderName,
   });
 
-  // Override sender_account if extractor provided one (e.g., future NIP account extraction)
   if (senderRes.senderAccount) {
     (validationInput as Record<string, unknown>).sender_account = senderRes.senderAccount;
   }
@@ -170,29 +182,94 @@ export async function processEmail(messageId: string, deps: ProcessEmailDeps = {
   try {
     validated = validateTransaction(validationInput as Record<string, unknown>);
   } catch (e) {
-    child.warn({ err: e, validationInput }, 'validation failed — validation_failed (format drift per FR-1.10)');
+    child.warn({ stage: 'validation', err: e, validationInput }, 'validation failed — validation_failed (format drift per FR-1.10)');
+    const field = (e as { issues?: Array<{ path?: unknown[] }> })?.issues?.[0]?.path?.[0] ? String((e as { issues: Array<{ path: unknown[] }> }).issues[0].path[0]) : 'validation';
+    try {
+      await alerterParseFailure({ messageId, field, rawSubject: msg.subject ?? '' });
+    } catch {}
     return 'validation_failed';
   }
+  child.info({ stage: 'validation', reference: validated.transaction_reference }, 'stage validation ok');
 
+  child.info({ stage: 'dedup', email_message_id: messageId }, 'stage dedup check');
   // 8) Atomic insert + heartbeat (ON CONFLICT DO NOTHING handles dedup)
-  const result = await insertTransactionAtomically({
-    amount: validated.amount,
-    currency: validated.currency,
-    transaction_reference: validated.transaction_reference,
-    transaction_date: validated.transaction_date,
-    transaction_time: validated.transaction_time as string | null,
-    sender_name: validated.sender_name,
-    sender_account: validated.sender_account,
-    description: validated.description,
-    branch: validated.branch,
-    available_balance: validated.available_balance as number | null,
-    email_message_id: validated.email_message_id,
-    email_auth_result: validated.email_auth_result,
-    raw_email: JSON.stringify({ headers: msg.headers, subject: msg.subject, htmlSnippet: html.slice(0, 2000) }),
-  });
+  let result: Awaited<ReturnType<typeof insertTransactionAtomically>>;
+  try {
+    result = await insertTransactionAtomically({
+      amount: validated.amount,
+      currency: validated.currency,
+      transaction_reference: validated.transaction_reference,
+      transaction_date: validated.transaction_date,
+      transaction_time: validated.transaction_time as string | null,
+      sender_name: validated.sender_name,
+      sender_account: validated.sender_account,
+      description: validated.description,
+      branch: validated.branch,
+      available_balance: validated.available_balance as number | null,
+      email_message_id: validated.email_message_id,
+      email_auth_result: validated.email_auth_result,
+      raw_email: JSON.stringify({ headers: msg.headers, subject: msg.subject, htmlSnippet: html.slice(0, 2000) }),
+    });
+  } catch (e) {
+    child.error({ stage: 'insert', err: e }, 'stage insert failed');
+    throw e;
+  }
 
+  child.info({ stage: 'insert', result, senderFamily: senderRes.family, reference: validated.transaction_reference }, 'stage insert done');
   child.info({ result, senderFamily: senderRes.family }, 'processEmail done');
   return result === 'inserted' ? 'inserted' : 'duplicate';
+}
+
+// --- Worker lifecycle ---
+
+let httpServer: import('http').Server | null = null;
+let watchTimer: NodeJS.Timeout | null = null;
+let pollTimer: NodeJS.Timeout | null = null;
+let stalenessTimer: NodeJS.Timeout | null = null;
+
+export function _resetWorkerStateForTests(): void {
+  if (httpServer) {
+    try { httpServer.close(); } catch {}
+    httpServer = null;
+  }
+  if (watchTimer) { clearInterval(watchTimer); watchTimer = null; }
+  if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+  if (stalenessTimer) { clearInterval(stalenessTimer); stalenessTimer = null; }
+}
+
+function createHttpServer(): import('http').Server {
+  const http = require('http') as typeof import('http');
+  const server = http.createServer(async (req: import('http').IncomingMessage, res: import('http').ServerResponse) => {
+    const url = req.url ?? '/';
+    if (req.method === 'POST' && url.startsWith('/gmail/pubsub')) {
+      let body = '';
+      req.on('data', (chunk: Buffer) => { body += chunk.toString(); });
+      await new Promise<void>((resolve) => req.on('end', resolve));
+      let json: unknown;
+      try { json = body ? JSON.parse(body) : {}; } catch { json = {}; }
+      const { handlePubSubPush } = await import('./gmail/push-handler');
+      const pushReq = { body: json as { message?: { data?: string } } };
+      const simpleRes = {
+        status: (code: number) => ({
+          send: (b: string) => { res.statusCode = code; res.end(b); },
+          json: (b: unknown) => { res.statusCode = code; res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify(b)); },
+        }),
+        send: (b: string) => { res.end(b); },
+      } as unknown as import('./gmail/push-handler').PushResponse;
+      await handlePubSubPush(pushReq as import('./gmail/push-handler').PushRequest, simpleRes);
+      if (!res.writableEnded) { res.statusCode = 200; res.end('OK'); }
+      return;
+    }
+    if (req.method === 'GET' && (url === '/health' || url === '/healthz')) {
+      res.statusCode = 200;
+      res.setHeader('Content-Type', 'application/json');
+      res.end(JSON.stringify({ ok: true }));
+      return;
+    }
+    res.statusCode = 404;
+    res.end('not found');
+  });
+  return server;
 }
 
 export async function start(): Promise<void> {
@@ -207,8 +284,67 @@ export async function start(): Promise<void> {
   logger.info('migrations ok');
 
   const { getGmailClient } = await import('./gmail/auth');
-  getGmailClient();
-  logger.info('gmail client ok');
+  try { getGmailClient(); logger.info('gmail client ok'); } catch (e) { logger.warn({ err: e }, 'gmail client init failed — continuing, watch will retry'); }
 
-  logger.info('worker ready — timers/poll/push wired in later plans');
+  // HTTP server for Pub/Sub push
+  const port = Number(process.env.PORT ?? env.PORT ?? 3000);
+  httpServer = createHttpServer();
+  await new Promise<void>((resolve, reject) => {
+    httpServer!.listen(port, () => {
+      logger.info({ port }, 'http server listening');
+      resolve();
+    });
+    httpServer!.on('error', reject);
+  });
+
+  // Watch renewal (24h) — boot register attempt
+  try {
+    const { registerWatch, scheduleWatchRenewal } = await import('./gmail/watch');
+    await registerWatch().catch(async (err) => {
+      logger.error({ err }, 'initial gmail watch register failed — will retry on schedule');
+      const { sendOnce } = await import('./alerts/alerter');
+      await sendOnce('watch-renewal', `Gmail watch initial register failed: ${(err as Error).message}`, 60 * 60 * 1000).catch(() => {});
+    });
+    watchTimer = scheduleWatchRenewal();
+    logger.info('watch renewal scheduled');
+  } catch (e) {
+    logger.error({ err: e }, 'watch scheduling failed');
+  }
+
+  // Poll sweep (15 min) — independent safety net
+  try {
+    const { schedulePollSweep } = await import('./gmail/poll');
+    pollTimer = schedulePollSweep();
+    logger.info('poll sweep scheduled');
+  } catch (e) {
+    logger.error({ err: e }, 'poll scheduling failed');
+  }
+
+  // Staleness checker — 60s pinned 07:00-21:00 Africa/Lagos
+  try {
+    const { startStalenessChecker } = await import('./observability/staleness');
+    stalenessTimer = startStalenessChecker(60 * 1000);
+    logger.info('staleness checker scheduled 60s');
+  } catch (e) {
+    logger.error({ err: e }, 'staleness scheduling failed');
+  }
+
+  // Graceful shutdown: SIGTERM/SIGINT drains timers + HTTP + pool
+  const shutdown = async (signal: string) => {
+    logger.info({ signal }, 'shutdown signal — draining');
+    if (stalenessTimer) { try { const { stopStalenessChecker } = await import('./observability/staleness'); stopStalenessChecker(); } catch {} clearInterval(stalenessTimer); stalenessTimer = null; }
+    if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+    if (watchTimer) { clearInterval(watchTimer); watchTimer = null; }
+    if (httpServer) {
+      await new Promise<void>((resolve) => httpServer!.close(() => resolve()));
+      httpServer = null;
+    }
+    try { await pool.end(); } catch {}
+    logger.info('shutdown complete');
+  };
+
+  process.once('SIGTERM', () => shutdown('SIGTERM').catch(() => process.exit(1)));
+  process.once('SIGINT', () => shutdown('SIGINT').catch(() => process.exit(1)));
+
+  logger.info('worker ready — all timers wired (poll 15m, watch 24h, staleness 60s)');
 }
