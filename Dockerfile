@@ -15,4 +15,4 @@ RUN npm ci --omit=dev --force
 COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/migrations ./migrations
 COPY --from=builder /app/src/db/migrate.ts ./src/db/migrate.ts
-CMD ["sh", "-c", "npm run migrate && npm start"]
+CMD ["sh", "-c", "node dist/db/migrate.js && npm start"]
