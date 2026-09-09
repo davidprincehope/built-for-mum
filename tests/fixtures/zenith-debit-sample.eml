@@ -1,0 +1,19 @@
+From: Zenith Bank <alerts@zenithbank.com>
+To: example@example.com
+Subject: DEBIT TRANSACTION NOTIFICATION
+Authentication-Results: mx.google.com; dkim=pass header.d=zenithbank.com header.s=selector1; spf=pass (google.com: domain of alerts@zenithbank.com designates 1.2.3.4 as permitted sender)
+MIME-Version: 1.0
+Content-Type: text/html; charset=UTF-8
+Content-Transfer-Encoding: quoted-printable
+
+<table>
+  <tr><td>Account Number</td><td>999****999</td></tr>
+  <tr><td>Date of Transaction</td><td>07/09/2026</td></tr>
+  <tr><td>Amount</td><td>100,000.00</td></tr>
+  <tr><td>Currency</td><td>NGN</td></tr>
+  <tr><td>Description</td><td>CIP CR/ JOHN DOE/Transfer from JOHN DOE</td></tr>
+  <tr><td>Reference Code</td><td>ZIB20260907005</td></tr>
+  <tr><td>Branch</td><td>KUBWA</td></tr>
+  <tr><td>Transaction Type</td><td>Debit</td></tr>
+  <tr><td>Available Balance</td><td>1,134,517.89</td></tr>
+</table>

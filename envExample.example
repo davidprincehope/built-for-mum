@@ -1,0 +1,112 @@
+# =============================================================
+# Payment Receipt Verification System — Environment Variables
+#
+# Grouped by the phase that introduces them. Phase 1 only needs
+# the first two blocks (Core + Gmail/Zenith Ingestion) — nothing
+# else is required until later phases are built.
+#
+# There is no separate "agent" service/API key anymore: OpenWorker
+# was removed, so the conversational side (Phase 2) is handled
+# directly by the WhatsApp API service using deterministic triggers
+# and canned responses — it needs WhatsApp credentials, not an
+# agent-platform key.
+# =============================================================
+
+# ---------------------------------------------------------------
+# Core
+# ---------------------------------------------------------------
+DATABASE_URL=
+
+# ---------------------------------------------------------------
+# Phase 1 — Gmail / Zenith Email Ingestion
+# ---------------------------------------------------------------
+
+# Option A: standard OAuth2 client (personal/non-Workspace Gmail)
+GOOGLE_CLIENT_ID=
+GOOGLE_CLIENT_SECRET=
+GOOGLE_REFRESH_TOKEN=
+
+# Option B: Workspace service account with domain-wide delegation
+# (preferred — doesn't degrade from re-consent/unverified-app warnings)
+GOOGLE_SERVICE_ACCOUNT_JSON=
+GOOGLE_DELEGATED_USER=
+
+# Gmail push (users.watch -> Pub/Sub). Poll sweep runs regardless
+# of these as an independent safety net (see Phase 1 plan, FR-1.2).
+GOOGLE_PUBSUB_TOPIC=
+GOOGLE_PUBSUB_SUBSCRIPTION=
+
+# Comma-separated — do not hardcode to a single domain string
+ZENITH_SENDER_DOMAINS=
+
+# Where FR-1.10 alerts get posted (spoofing attempts, parse
+# failures, staleness)
+ALERT_WEBHOOK_URL=
+
+STALENESS_THRESHOLD_MINUTES=60
+BUSINESS_HOURS_START=07:00
+BUSINESS_HOURS_END=21:00
+BUSINESS_HOURS_TIMEZONE=Africa/Lagos
+POLL_INTERVAL_MINUTES=15
+
+# ---------------------------------------------------------------
+# Phase 2 — WhatsApp (this is the "agent" layer now — no separate
+# agent-platform credentials needed; it's handled by this service
+# directly)
+# ---------------------------------------------------------------
+WHATSAPP_ACCESS_TOKEN=
+WHATSAPP_PHONE_NUMBER_ID=
+WHATSAPP_VERIFY_TOKEN=
+WHATSAPP_APP_SECRET=             # used for webhook signature validation
+
+VERIFICATION_SESSION_EXPIRY_MINUTES=15
+VERIFICATION_TRIGGER_KEYWORDS=VERIFY PAYMENT,VERIFY,CHECK PAYMENT
+
+# ---------------------------------------------------------------
+# Phase 3 — Receipt Processing + OCR
+# ---------------------------------------------------------------
+MISTRAL_API_KEY=
+
+AI_FALLBACK_PROVIDER=            # gemini | openai
+AI_FALLBACK_API_KEY=
+
+OCR_CONFIDENCE_HIGH_THRESHOLD=0.90
+OCR_CONFIDENCE_LOW_THRESHOLD=0.70
+
+MAX_RECEIPT_FILE_SIZE_MB=10
+ALLOWED_RECEIPT_MEDIA_TYPES=image/jpeg,image/png,application/pdf
+
+# ---------------------------------------------------------------
+# Phase 4 — Matching Engine
+# ---------------------------------------------------------------
+# (no dedicated env vars — matching rules are code, not config)
+
+# ---------------------------------------------------------------
+# Phase 5 — Retry & Reconciliation Engine
+# ---------------------------------------------------------------
+RETRY_INTERVAL_SECONDS=60
+RETRY_MAX_ATTEMPTS=6
+AGENT_RETRY_WINDOW_MINUTES=5          # how long the WhatsApp side keeps retrying before NOT_RECEIVED
+RECONCILIATION_WINDOW_HOURS=48        # how long the background job keeps checking after that
+
+# ---------------------------------------------------------------
+# Phase 6 — Production Hardening
+# ---------------------------------------------------------------
+ADMIN_AUTH_SECRET=
+RATE_LIMIT_WHATSAPP_MESSAGES_PER_MINUTE=30
+DATA_RETENTION_DAYS=365
+
+# ---------------------------------------------------------------
+# Not yet decided — placeholders only, fill in once chosen
+# ---------------------------------------------------------------
+# Object storage for receipt media (S3-compatible, Railway volume,
+# or similar) is referenced by receipts.storage_reference in the
+# schema but no provider has been chosen yet.
+# RECEIPT_STORAGE_PROVIDER=
+# RECEIPT_STORAGE_BUCKET=
+# RECEIPT_STORAGE_ACCESS_KEY=
+# RECEIPT_STORAGE_SECRET_KEY=
+
+# Redis/BullMQ — only needed once volume requires an upgrade from
+# the Postgres-based queue.
+# REDIS_URL=
