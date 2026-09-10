@@ -31,6 +31,14 @@ const envSchema = z.object({
       message: 'TELEGRAM_WEBHOOK_SECRET must be 1-256 chars matching A-Za-z0-9_-',
     }),
   TELEGRAM_ADMIN_CHAT_IDS: z.string().optional().default(''),
+  TELEGRAM_BOT_PASSWORD: z
+    .string()
+    .optional()
+    .default('')
+    .refine((v) => v === '' || v.length >= 12, {
+      message: 'TELEGRAM_BOT_PASSWORD must be at least 12 chars when set',
+    }),
+  OPENROUTER_API_KEY: z.string().optional().default(''),
   TELEGRAM_WEBHOOK_URL: z
     .string()
     .optional()

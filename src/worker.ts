@@ -245,6 +245,7 @@ export function _resetWorkerStateForTests(): void {
   try { const { _resetRateLimitForTests } = require('./telegram/rateLimit'); _resetRateLimitForTests(); } catch {}
   try { const { _resetStalenessStateForTests } = require('./observability/staleness'); _resetStalenessStateForTests(); } catch {}
   try { const { _resetPollRunningForTests } = require('./gmail/poll'); _resetPollRunningForTests(); } catch {}
+  try { const { _resetSessionsForTests } = require('./telegram/session'); _resetSessionsForTests(); } catch {}
 }
 
 async function registerTelegramWebhookIfConfigured(): Promise<void> {
@@ -319,11 +320,37 @@ function createHttpServer(): import('http').Server {
         const body = await readJsonBody(req);
         const chatId = extractChatId(body);
 
-        if (!chatId || !isAllowedChat(chatId)) {
-          logger.warn({ chatId: chatId ?? 'unknown', url }, 'telegram webhook blocked — not allowlisted');
+        if (!chatId) {
+          logger.warn({ url }, 'telegram webhook blocked — no chatId');
           res.statusCode = 200;
           res.end('OK');
           return;
+        }
+
+        // Session gate: if TELEGRAM_BOT_PASSWORD set, require login except for login/help/start; else fallback to legacy allowlist
+        const botPassword = process.env.TELEGRAM_BOT_PASSWORD ?? '';
+        const bodyAnyEarly = body as { message?: { text?: string }; callback_query?: { data?: string } };
+        const rawTextEarly: string = bodyAnyEarly?.message?.text ?? bodyAnyEarly?.callback_query?.data ?? '';
+        const { cmd: earlyCmd } = parseCommandText(rawTextEarly);
+        const publicCmds = new Set(['login', 'help', 'start']);
+        if (botPassword) {
+          const { isLoggedIn } = await import('./telegram/session');
+          if (!publicCmds.has(earlyCmd) && !isLoggedIn(chatId)) {
+            logger.warn({ chatId }, 'telegram blocked — not logged in (no DB touch)');
+            res.statusCode = 200;
+            res.end('OK');
+            try {
+              await sendTelegramMessage(chatId, '🔒 Please /login <password> first — session 24h or after restart');
+            } catch {}
+            return;
+          }
+        } else {
+          if (!isAllowedChat(chatId)) {
+            logger.warn({ chatId, url }, 'telegram webhook blocked — not allowlisted');
+            res.statusCode = 200;
+            res.end('OK');
+            return;
+          }
         }
 
         // Global per-chat rate limit 15/10s

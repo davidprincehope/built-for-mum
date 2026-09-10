@@ -47,6 +47,36 @@ async function withTimeout<T>(p: Promise<T>, ms = 5000, fallback: T): Promise<T>
   }
 }
 
+// --- login / logout ---
+export async function handleLogin(chatId: string, args: string[]): Promise<{ text: string }> {
+  if (!args || args.length === 0 || !args[0]) {
+    return { text: 'Usage: /login <password>' };
+  }
+  if (isRateLimited(chatId, 'login', 5, 60_000)) {
+    return { text: '⏳ Login cooling down — retry in ~60s' };
+  }
+  const password = args[0];
+  const botPassword = process.env.TELEGRAM_BOT_PASSWORD ?? '';
+  if (!botPassword) {
+    return { text: '⚠️ Bot not configured — set TELEGRAM_BOT_PASSWORD' };
+  }
+  // Use session login which does timingSafeEqual
+  const { login } = await import('./session');
+  const ok = login(chatId, password);
+  if (ok) {
+    logger.info({ chatId }, 'telegram login success');
+    return { text: '✅ Logged in for 24h • Try /balance, /history, /verify, /search' };
+  }
+  logger.warn({ chatId }, 'telegram login failed — wrong password');
+  return { text: '❌ Wrong password' };
+}
+
+export async function handleLogout(chatId: string): Promise<{ text: string }> {
+  const { logout } = await import('./session');
+  logout(chatId);
+  return { text: '👋 Logged out' };
+}
+
 // --- help with professional UI and inline keyboard ---
 
 export function buildHelpReply(): { text: string; replyMarkup?: unknown } {
@@ -54,20 +84,25 @@ export function buildHelpReply(): { text: string; replyMarkup?: unknown } {
     '🤖 <b>PaymentVerificationBot — Admin Console</b>',
     '━━━━━━━━━━━━━━━━━━━━',
     '',
+    '🔐 <b>Auth</b>',
+    '  /login &lt;password&gt;  —  Login for 24h session',
+    '  /logout  —  End session',
+    '',
     '📊 <b>Monitoring</b>',
     '  /status  —  Worker health, DB & pipeline state',
     '  /health  —  Alias for /status',
     '  /logs <i>[n] [level]</i>  —  Tail worker logs <code>(20 warn)</code>',
     '',
     '💳 <b>Transactions</b>',
-    '  /history <i>[n]</i>  —  Last <i>n</i> credits <code>(5)</code>',
+    '  /balance  —  Available & current + last TX',
+    '  /history <i>[from to]</i>  —  Range Lagos DD/MM/YYYY or YYYY-MM-DD',
     '  /suspicious <i>[n]</i>  —  Last <i>n</i> spoofs <code>(5)</code>',
     '',
     '⚡ <b>Actions</b>',
     '  /poll    —  Trigger Gmail poll <i>(30s cooldown)</i>',
     '  /watch   —  Re-register Gmail watch <i>(60s cooldown)</i>',
     '',
-    '💡 <i>Examples:</i> <code>/history 5</code>  <code>/logs 20 warn</code>  <code>/poll</code>',
+    '💡 <i>Examples:</i> <code>/login secret</code>  <code>/balance</code>  <code>/history 01/09/2026 10/09/2026</code>',
     '',
     '🔗 <a href="https://example.com/health">Health endpoint</a> • <code>Africa/Lagos</code>',
   ].join('\n');
@@ -421,7 +456,25 @@ const handlers: Record<string, Handler> = {
   help: async () => buildHelpReply(),
   status: async () => buildStatusReply(),
   health: async () => buildStatusReply(),
-  history: async (chatId, args) => handleHistory(args[0]),
+  login: async (chatId, args) => handleLogin(chatId, args),
+  logout: async (chatId) => handleLogout(chatId),
+  balance: async (chatId, _args) => {
+    try {
+      const { buildBalanceReply } = await import('./balance');
+      return buildBalanceReply();
+    } catch {
+      return '⚠️ Balance not yet available';
+    }
+  },
+  history: async (chatId, args) => {
+    // Try new Lagos range handler first; fallback to legacy single-arg
+    try {
+      const { handleHistoryWithRange } = await import('./history');
+      return handleHistoryWithRange(args);
+    } catch {
+      return handleHistory(args[0]);
+    }
+  },
   suspicious: async (chatId, args) => handleSuspicious(args[0]),
   logs: async (chatId, args) => handleLogs(args[0] ? Number(args[0]) : undefined, args[1]),
   poll: async (chatId) => handlePollTrigger(chatId),
