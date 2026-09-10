@@ -246,6 +246,7 @@ export function _resetWorkerStateForTests(): void {
   try { const { _resetStalenessStateForTests } = require('./observability/staleness'); _resetStalenessStateForTests(); } catch {}
   try { const { _resetPollRunningForTests } = require('./gmail/poll'); _resetPollRunningForTests(); } catch {}
   try { const { _resetSessionsForTests } = require('./telegram/session'); _resetSessionsForTests(); } catch {}
+  try { const { _resetVerifyCacheForTests } = require('./telegram/verify'); _resetVerifyCacheForTests(); } catch {}
 }
 
 async function registerTelegramWebhookIfConfigured(): Promise<void> {
@@ -465,6 +466,12 @@ export async function start(): Promise<void> {
     });
     httpServer!.on('error', reject);
   });
+
+  // Telegram tmp cleanup sweep (24h stale tg-verify-*)
+  try {
+    const { cleanupStaleTmp } = await import('./telegram/media');
+    cleanupStaleTmp().catch(() => {});
+  } catch {}
 
   // Telegram webhook registration (if env configured) — must not fail boot
   try {
