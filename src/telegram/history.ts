@@ -87,7 +87,7 @@ export async function handleHistoryWithRange(args: string[], opts?: { limit?: nu
   let limit = opts?.limit ?? 10;
   let offset = opts?.offset ?? 0;
 
-  limit = Math.max(1, Math.min(10, Math.floor(limit)));
+  limit = Math.max(1, Math.min(50, Math.floor(limit)));
   offset = Math.max(0, Math.floor(offset));
 
   if (!args || args.length === 0) {
@@ -124,7 +124,7 @@ export async function handleHistoryWithRange(args: string[], opts?: { limit?: nu
 
   // pagination for default recent: "/history 10 10" => limit offset
   if (args.length === 2 && /^\d+$/.test(args[0]) && /^\d+$/.test(args[1])) {
-    limit = Math.max(1, Math.min(10, Number(args[0])));
+    limit = Math.max(1, Math.min(50, Number(args[0])));
     offset = Math.max(0, Number(args[1]));
     try {
       const result = await withTimeout(
@@ -157,7 +157,7 @@ export async function handleHistoryWithRange(args: string[], opts?: { limit?: nu
     const maybeTo = parseDateArg(args[1]);
     if (maybeFrom && maybeTo) {
       from = maybeFrom; to = maybeTo;
-      limit = Math.max(1, Math.min(10, Number(args[2])));
+      limit = Math.max(1, Math.min(50, Number(args[2])));
       offset = Math.max(0, Number(args[3]));
     }
   }
@@ -223,20 +223,24 @@ function formatRows(
     ? `💳 <b>Recent Transactions</b> <i>(last ${rows.length})</i>`
     : `💳 <b>History</b> <i>${escapeHtml(ctx.from)} → ${escapeHtml(ctx.to)}</i>`;
 
+  const totalLine = ctx.isDefault
+    ? `Total: ${ctx.total} shown`
+    : `Total: ${ctx.total} in range`;
+
   // Enforce 10 per message already via limit; if rendered text exceeds 3800 drop last whole cards
   const headerWithDiv = `${rangeHeader}\n━━━━━━━━━━━━━━━━━━━━\n`;
-  let text = headerWithDiv + joined;
+  let text = headerWithDiv + joined + `\n<i>${escapeHtml(totalLine)}</i>`;
 
   // 4096 safe: if exceeds 3800, drop last whole cards then append truncation hint
   if (text.length > 3800) {
     let kept = [...cards];
-    while (kept.length > 1 && (headerWithDiv + kept.join(divider)).length > 3800) {
+    while (kept.length > 1 && (headerWithDiv + kept.join(divider) + `\n<i>${escapeHtml(totalLine)}</i>`).length > 3800) {
       kept.pop();
     }
     const dropped = cards.length - kept.length;
     joined = kept.join(divider);
     const suffix = dropped > 0 ? `\n… + ${dropped} more — tap Next 10` : '';
-    text = headerWithDiv + joined + suffix;
+    text = headerWithDiv + joined + suffix + `\n<i>${escapeHtml(totalLine)}</i>`;
   }
 
   if (text.length > 4000) text = text.slice(0, 3990) + '\n… truncated';

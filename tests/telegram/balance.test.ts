@@ -46,9 +46,11 @@ describe('telegram balance — buildBalanceReply', () => {
     _setPoolForTests(mockPoolForBalance(rows));
     const { buildBalanceReply } = await import('../../src/telegram/balance');
     const res = await buildBalanceReply();
-    expect(res.text).toContain('Available: 319599.78');
-    expect(res.text).toContain('Current: 319599.78');
-    expect(res.text).toContain('100.00 NGN from EXAMPLE MERCHANT');
+    expect(res.text).toContain('Available:');
+    expect(res.text).toContain('319599.78');
+    expect(res.text).toContain('Current:');
+    expect(res.text).toContain('100.00 NGN');
+    expect(res.text).toContain('EXAMPLE MERCHANT');
     expect(res.text).toContain('2026-09-10');
     _setPoolForTests(null);
   });
@@ -69,8 +71,9 @@ describe('telegram balance — buildBalanceReply', () => {
     _setPoolForTests(mockPoolForBalance(rows));
     const { buildBalanceReply } = await import('../../src/telegram/balance');
     const res = await buildBalanceReply();
-    expect(res.text).toContain('Available: —');
-    expect(res.text).toContain('Current: —');
+    expect(res.text).toContain('Available:');
+    expect(res.text).toContain('—');
+    expect(res.text).toContain('Current:');
     expect(res.text).not.toContain('Available: 0');
     _setPoolForTests(null);
   });

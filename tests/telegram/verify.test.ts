@@ -312,8 +312,9 @@ describe('telegram verify — parseFreeForm, dedup, pdf/vision gates, determinis
     const chatId = '999';
     // unauth photo should return login prompt without download
     let update: unknown = { message: { chat: { id: Number(chatId) }, photo: [{ file_id: 'fid1', file_size: 100 }, { file_id: 'fid2', file_size: 900 }] } };
-    let res = await handleTelegramUpdate(update);
-    expect(String(res)).toContain('/login');
+    let res = await handleTelegramUpdate(update) as unknown as { text: string } | string;
+    const resText = typeof res === 'object' && res !== null && 'text' in res ? (res as { text: string }).text : String(res);
+    expect(resText).toContain('/login');
 
     // login then photo with caption that parses locally should succeed
     login(chatId, 'testpassword12345');

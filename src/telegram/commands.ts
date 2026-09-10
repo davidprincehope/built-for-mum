@@ -101,7 +101,7 @@ export async function handleLogout(chatId: string): Promise<{ text: string }> {
 // --- verify / search with rate-limit tuning per D-14 ---
 export async function handleVerifyStub(chatId: string, args: string[]): Promise<{ text: string }> {
   if (isRateLimited(chatId, 'verify', 5, 60_000)) {
-    return { text: '⏳ Slow down — verify cooling down, retry in ~30s. Tip: try again shortly' };
+    return { text: '⏳ Slow down — Verify cooling down, retry in ~30s. Tip: try again shortly' };
   }
   const freeText = (args ?? []).join(' ').trim();
   if (freeText) {
@@ -124,7 +124,7 @@ export async function handleSearchStub(chatId: string, args: string[]): Promise<
     return { text: w.text, replyMarkup: w.replyMarkup };
   }
   if (isRateLimited(chatId, 'search', 10, 60_000)) {
-    return { text: '⏳ Slow down — search cooling down, retry in ~30s. Tip: try again shortly' };
+    return { text: '⏳ Slow down — Search cooling down, retry in ~30s. Tip: try again shortly' };
   }
   const q = (args ?? []).join(' ').trim();
   if (!q) return { text: 'Usage: /search <query> e.g. /search last week large transfers or /search SAMPLE SENDER 100k September' };
@@ -562,7 +562,7 @@ type Handler = (chatId: string, args: string[]) => Promise<{ text: string; reply
 export async function handleExportWrapper(chatId: string, args: string[]): Promise<{ text: string; replyMarkup?: unknown } | string> {
   const { isLoggedIn } = await import('./session');
   if (!isLoggedIn(chatId)) return buildWelcomeReply();
-  if (isRateLimited(chatId, 'export', 5, 60_000)) return '⏳ Slow down — export cooling down, retry in ~30s. Tip: try again shortly';
+  if (isRateLimited(chatId, 'export', 5, 60_000)) return '⏳ Slow down — Export cooling down, retry in ~30s. Tip: try again shortly';
   try {
     const { handleExport } = await import('./export');
     return await handleExport(args, chatId);
@@ -672,7 +672,7 @@ export async function handleTelegramUpdate(update: unknown): Promise<{ text: str
       } catch {}
 
       if (isRateLimited(chatId, 'verify', 5, 60_000)) {
-        return '⏳ Slow down — verify cooling down, retry in ~30s. Tip: try again shortly';
+        return '⏳ Slow down — Verify cooling down, retry in ~30s. Tip: try again shortly';
       }
 
       // resolve fileId and mime
