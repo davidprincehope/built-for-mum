@@ -19,6 +19,7 @@
     "cheerio": "1.2.0",
     "date-fns": "4.4.0",
     "date-fns-tz": "3.2.0",
+    "dotenv": "^17.4.2",
     "google-auth-library": "11.0.2",
     "googleapis": "178.1.1",
     "pg": "8.23.0",

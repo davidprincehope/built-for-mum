@@ -8,7 +8,11 @@
 export function isCreditTransaction(subject: string, transactionTypeField?: string | null): boolean {
   const subj = (subject ?? '').toUpperCase();
   // Subject wins: CREDIT marker → true even if type says Debit (forwarded edge)
-  // Use includes so Fwd:/Re: prefixes still match
+  // Use includes so Fwd:/Re: prefixes still match. Real Zenith subject is
+  // "ZENITH BANK TRANSACTION ALERT[CREDIT:NGN100.00]" not "CREDIT TRANSACTION NOTIFICATION"
+  // per live Gmail sample 2026-09-10, so also check ALERT[...] pattern.
+  if (subj.includes('CREDIT')) return true;
+  if (subj.includes('DEBIT')) return false;
   if (subj.includes('CREDIT TRANSACTION NOTIFICATION')) return true;
   if (subj.includes('DEBIT TRANSACTION NOTIFICATION')) return false;
 
@@ -26,7 +30,10 @@ export function isTransactionAlert(
   hasTable?: boolean | string | Record<string, string>,
 ): boolean {
   const subj = (subject ?? '').trim();
-  const hasAlertSubject = /(CREDIT|DEBIT)\s+TRANSACTION\s+NOTIFICATION/i.test(subj);
+  const hasAlertSubject =
+    /(CREDIT|DEBIT)\s+TRANSACTION\s+NOTIFICATION/i.test(subj) ||
+    /TRANSACTION\s+ALERT\s*\[?\s*(CREDIT|DEBIT)/i.test(subj) ||
+    /ZENITH\s+BANK\s+TRANSACTION\s+ALERT/i.test(subj);
   if (!hasAlertSubject) return false;
 
   // Also require evidence of Zenith table structure to distinguish from spoof subject-only

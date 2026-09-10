@@ -91,7 +91,7 @@ function extractCurrency(raw: string): string {
 
 function extractReferenceCode(raw: string): string {
   const v = raw.trim();
-  if (!v) throw new ParseFailure('referenceCode', 'empty reference code');
+  // Live 2026-09-10 NIP sample has empty reference code (NIP/KUDA...); allow empty and let validation decide
   return v;
 }
 
@@ -138,12 +138,19 @@ export function parseZenithEmail(html: string): ParsedFields {
     throw new ParseFailure(fieldName, `missing row for keys [${keys.join(', ')}]`);
   }
 
+  function optionalKv(keys: string[]): string {
+    for (const k of keys) {
+      if (k.toLowerCase() in kv) return kv[k.toLowerCase()] ?? '';
+    }
+    return '';
+  }
+
   const accountNumberRaw = requireKv(['account number', 'account'], 'accountNumber');
   const dateRaw = requireKv(['date of transaction', 'transaction date', 'date'], 'transactionDateStr');
   const amountRaw = requireKv(['amount'], 'amountStr');
   const currencyRaw = requireKv(['currency'], 'currency');
   const descriptionRaw = requireKv(['description', 'narration'], 'description');
-  const referenceRaw = requireKv(['reference code', 'reference', 'reference number'], 'referenceCode');
+  const referenceRaw = optionalKv(['reference code', 'reference', 'reference number']);
   const branchRaw = requireKv(['branch'], 'branch');
   const typeRaw = requireKv(['transaction type', 'type'], 'transactionType');
   const balanceRaw = requireKv(['available balance', 'current balance', 'balance'], 'availableBalanceStr');

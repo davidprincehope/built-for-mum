@@ -14,7 +14,7 @@ export const transactionSchema = z.object({
     })
     .refine((n) => /^\d+(\.\d{1,2})?$/.test(String(n)), { message: 'amount max 2 decimals' }),
   currency: currencyEnum,
-  transaction_reference: z.string().min(1, 'transaction_reference non-empty'),
+  transaction_reference: z.string().optional().default('').transform((s) => s.trim()),
   transaction_date: z
     .string()
     .regex(/^\d{2}\/\d{2}\/\d{4}$/, 'transaction_date must be DD/MM/YYYY')
