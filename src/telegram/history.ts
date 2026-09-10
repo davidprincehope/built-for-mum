@@ -171,6 +171,11 @@ export async function handleHistoryWithRange(args: string[], opts?: { limit?: nu
         from = (parsed as { from: string; to: string }).from;
         to = (parsed as { from: string; to: string }).to;
       } else {
+        // If any arg looks like explicit date (YYYY-MM-DD or DD/MM/YYYY), show parse error — user intended explicit syntax
+        const hasExplicitDates = args.some((a) => /^\d{4}-\d{2}-\d{2}$/.test(a) || /^\d{2}\/\d{2}\/\d{4}$/.test(a));
+        if (hasExplicitDates) {
+          return { text: escapeHtml((parsed as { error: string }).error) };
+        }
         // NL fallback only when explicit parse failed and text contains letters
         const joined = args.join(' ').trim();
         const hasWords = /[A-Za-z]/.test(joined);
