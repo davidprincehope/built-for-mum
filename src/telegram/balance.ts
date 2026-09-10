@@ -28,6 +28,7 @@ export async function buildBalanceReply(): Promise<{ text: string; replyMarkup?:
       transaction_date: string | null;
       transaction_time: string | null;
       description: string | null;
+      branch: string | null;
     }>;
     const result = await withTimeout(
       pool.query<{
@@ -39,15 +40,16 @@ export async function buildBalanceReply(): Promise<{ text: string; replyMarkup?:
         transaction_date: string | null;
         transaction_time: string | null;
         description: string | null;
+        branch: string | null;
       }>(
-        `SELECT available_balance::text, current_balance::text, amount::text, currency, sender_name, transaction_date::text, transaction_time::text, description FROM transactions ORDER BY transaction_date DESC, transaction_time DESC, created_at DESC LIMIT 1`,
+        `SELECT available_balance::text, current_balance::text, amount::text, currency, sender_name, transaction_date::text, transaction_time::text, description, branch FROM transactions ORDER BY transaction_date DESC, transaction_time DESC, created_at DESC LIMIT 1`,
       ),
       5000,
       fallback,
     );
     const rows = (result as { rows?: Array<Record<string, string | null>> }).rows ?? [];
     if (!rows || rows.length === 0) {
-      return { text: '📭 No transactions yet' };
+      return { text: '📭 <b>Balance</b>\n<i>No transactions yet</i>\n\nSend a Zenith credit to <code>999****999</code> to see it here.' };
     }
     const r = rows[0] as Record<string, string | null>;
     const availRaw = r.available_balance;
@@ -57,14 +59,37 @@ export async function buildBalanceReply(): Promise<{ text: string; replyMarkup?:
     const amount = r.amount != null && r.amount !== '' ? escapeHtml(r.amount) : '—';
     const currency = r.currency ? escapeHtml(r.currency) : 'NGN';
     const sender = r.sender_name ? escapeHtml(r.sender_name) : '—';
-    const date = r.transaction_date ? escapeHtml(r.transaction_date) : '';
-    const time = r.transaction_time ? escapeHtml(r.transaction_time) : '';
-    const lagosTime = time ? time.slice(0, 5) : '';
-    const lastLine = date ? `${amount} ${currency} from ${sender} ${date} ${lagosTime}`.trim() + ' Africa/Lagos' : `${amount} ${currency} from ${sender}`;
-    let text = `💰 <b>Balance</b>\nAvailable: ${avail}\nCurrent: ${curr}\nLast: ${lastLine}`;
+    const date = r.transaction_date ? escapeHtml(r.transaction_date.slice(0, 10)) : '';
+    const time = r.transaction_time ? escapeHtml(r.transaction_time.slice(0, 5)) : '';
+    const branch = r.branch ? escapeHtml(r.branch) : '';
+
+    const lines: string[] = [];
+    lines.push('💰 <b>Balance</b>');
+    lines.push('━━━━━━━━━━━━━━━━━━━━');
+    lines.push(`💰 <b>Available:</b> <code>${avail}</code>`);
+    lines.push(`💳 <b>Current:</b> <code>${curr}</code>`);
+    lines.push('');
+    lines.push('📅 <b>Last Transaction</b>');
+    if (date) {
+      lines.push(`  💳 <code>${amount} ${currency}</code> from <code>${sender}</code>`);
+      lines.push(`  📅 <code>${date}</code>${time ? ` <code>${time}</code>` : ''} <i>Africa/Lagos</i>`);
+      if (branch) lines.push(`  🔖 <code>${branch}</code>`);
+    } else {
+      lines.push(`  💳 <code>${amount} ${currency}</code> from <code>${sender}</code>`);
+    }
+
+    let text = lines.join('\n');
     if (text.length > 4000) text = text.slice(0, 3990) + '\n… truncated';
-    return { text };
+    const replyMarkup = {
+      inline_keyboard: [
+        [
+          { text: '📜 History', callback_data: '/history' },
+          { text: '🔄 Refresh', callback_data: '/balance' },
+        ],
+      ],
+    };
+    return { text, replyMarkup };
   } catch {
-    return { text: '⚠️ Balance unavailable — DB error' };
+    return { text: '⚠️ <b>Balance unavailable</b>\n<i>DB error — check /logs</i>' };
   }
 }

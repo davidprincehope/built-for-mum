@@ -341,7 +341,9 @@ function createHttpServer(): import('http').Server {
             res.statusCode = 200;
             res.end('OK');
             try {
-              await sendTelegramMessage(chatId, '🔒 Please /login <password> first — session 24h or after restart');
+              const { buildWelcomeReply } = await import('./telegram/commands');
+              const welcome = buildWelcomeReply();
+              await sendTelegramMessage(chatId, welcome.text, { replyMarkup: welcome.replyMarkup });
             } catch {}
             return;
           }
@@ -358,7 +360,7 @@ function createHttpServer(): import('http').Server {
         if (isRateLimited(chatId, 'global', 15, 10_000)) {
           logger.warn({ chatId }, 'telegram global rate limited');
           if (!res.writableEnded) { res.statusCode = 200; res.end('OK'); }
-          try { await sendTelegramMessage(chatId, '⏳ rate limited — slow down'); } catch {}
+          try { await sendTelegramMessage(chatId, '⏳ Slow down — you hit 30/min, try again in 12s. Tip: use /history 2026-09-01'); } catch {}
           return;
         }
 
@@ -370,7 +372,15 @@ function createHttpServer(): import('http').Server {
 
         let reply: unknown = null;
         try {
-          reply = await handleTelegramUpdate(body);
+          // Login delete wiring: intercept /login to pass message_id for deleteMessage
+          if (earlyCmd === 'login' && (body as { message?: { message_id?: number } })?.message?.message_id) {
+            const { handleLogin } = await import('./telegram/commands');
+            const mid = (body as { message?: { message_id?: number } }).message!.message_id!;
+            const args = parseCommandText(rawTextEarly).args;
+            reply = await handleLogin(chatId, args, mid);
+          } else {
+            reply = await handleTelegramUpdate(body);
+          }
         } catch (err) {
           logger.warn({ err, chatId }, 'handleTelegramUpdate threw — suppressed');
           reply = null;
@@ -395,13 +405,12 @@ function createHttpServer(): import('http').Server {
             logger.warn({ err, chatId }, 'sendTelegramMessage failed after webhook');
           }
         }
-        // Answer callback_query to remove spinner (if present)
+        // Answer callback_query to remove spinner (if present) via helper
         const cbId = (body as { callback_query?: { id?: string } })?.callback_query?.id;
         if (cbId) {
           try {
-            const token = process.env.TELEGRAM_BOT_TOKEN ?? process.env.TELEGRAM_BOT_TOKEN_ALT ?? '';
-            const t = token || (process.env.ALERT_WEBHOOK_URL?.match(/api\.telegram\.org\/bot([^\/\s]+)/)?.[1] ?? '');
-            if (t) await fetch(`https://api.telegram.org/bot${t}/answerCallbackQuery`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ callback_query_id: cbId }) }).catch(() => {});
+            const { answerCallbackQuery } = await import('./telegram/sendMessage');
+            await answerCallbackQuery(cbId);
           } catch {}
         }
         return;
@@ -478,6 +487,14 @@ export async function start(): Promise<void> {
     await registerTelegramWebhookIfConfigured();
   } catch (e) {
     logger.warn({ err: e }, 'telegram webhook registration error — continuing');
+  }
+
+  // Telegram menu registration — setMyCommands + setChatMenuButton (per D-05/D-15)
+  try {
+    const { registerMenuIfConfigured } = await import('./telegram/menu');
+    await registerMenuIfConfigured();
+  } catch (e) {
+    logger.warn({ err: e }, 'telegram menu registration error — continuing');
   }
 
   // Watch renewal (24h) — boot register attempt

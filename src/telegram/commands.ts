@@ -47,24 +47,45 @@ async function withTimeout<T>(p: Promise<T>, ms = 5000, fallback: T): Promise<T>
   }
 }
 
+export function buildWelcomeReply(): { text: string; replyMarkup: unknown } {
+  const text = [
+    '🤖 <b>Welcome to PaymentVerificationBot</b>',
+    '━━━━━━━━━━━━━━━━━━━━',
+    'Send <code>/login &lt;password&gt;</code> to start (24h session)',
+    '• Try <code>/help</code> for commands',
+  ].join('\n');
+  const replyMarkup = {
+    inline_keyboard: [
+      [{ text: '🔐 Login', callback_data: '/login' }],
+      [{ text: '❓ Help', callback_data: '/help' }],
+    ],
+  };
+  return { text, replyMarkup };
+}
+
 // --- login / logout ---
-export async function handleLogin(chatId: string, args: string[]): Promise<{ text: string }> {
+export async function handleLogin(chatId: string, args: string[], messageId?: number): Promise<{ text: string; replyMarkup?: unknown }> {
   if (!args || args.length === 0 || !args[0]) {
     return { text: 'Usage: /login <password>' };
   }
   if (isRateLimited(chatId, 'login', 5, 60_000)) {
-    return { text: '⏳ Login cooling down — retry in ~60s' };
+    return { text: '⏳ Slow down — login cooling down, retry in ~60s. Tip: try again shortly' };
   }
   const password = args[0];
   const botPassword = process.env.TELEGRAM_BOT_PASSWORD ?? '';
   if (!botPassword) {
     return { text: '⚠️ Bot not configured — set TELEGRAM_BOT_PASSWORD' };
   }
-  // Use session login which does timingSafeEqual
   const { login } = await import('./session');
   const ok = login(chatId, password);
   if (ok) {
     logger.info({ chatId }, 'telegram login success');
+    if (messageId) {
+      try {
+        const { deleteTelegramMessage } = await import('./sendMessage');
+        deleteTelegramMessage(chatId, messageId).catch(() => {});
+      } catch {}
+    }
     return { text: '✅ Logged in for 24h • Try /balance, /history, /verify, /search' };
   }
   logger.warn({ chatId }, 'telegram login failed — wrong password');
@@ -80,7 +101,7 @@ export async function handleLogout(chatId: string): Promise<{ text: string }> {
 // --- verify / search with rate-limit tuning per D-14 ---
 export async function handleVerifyStub(chatId: string, args: string[]): Promise<{ text: string }> {
   if (isRateLimited(chatId, 'verify', 5, 60_000)) {
-    return { text: '⏳ Verify cooling down — retry in ~30s' };
+    return { text: '⏳ Slow down — verify cooling down, retry in ~30s. Tip: try again shortly' };
   }
   const freeText = (args ?? []).join(' ').trim();
   if (freeText) {
@@ -98,9 +119,12 @@ export async function handleVerifyStub(chatId: string, args: string[]): Promise<
 
 export async function handleSearchStub(chatId: string, args: string[]): Promise<{ text: string; replyMarkup?: unknown }> {
   const { isLoggedIn } = await import('./session');
-  if (!isLoggedIn(chatId)) return { text: '🔒 Please /login <password> first — session 24h or after restart' };
+  if (!isLoggedIn(chatId)) {
+    const w = buildWelcomeReply();
+    return { text: w.text, replyMarkup: w.replyMarkup };
+  }
   if (isRateLimited(chatId, 'search', 10, 60_000)) {
-    return { text: '⏳ Search cooling down — retry in ~30s' };
+    return { text: '⏳ Slow down — search cooling down, retry in ~30s. Tip: try again shortly' };
   }
   const q = (args ?? []).join(' ').trim();
   if (!q) return { text: 'Usage: /search <query> e.g. /search last week large transfers or /search SAMPLE SENDER 100k September' };
@@ -485,7 +509,7 @@ export function handleLogs(rawN: number | string | undefined, rawLevel: string |
 
 export async function handlePollTrigger(chatId: string): Promise<{ text: string; replyMarkup?: unknown }> {
   if (isRateLimited(chatId, 'poll', 1, 30_000)) {
-    return { text: '⏳ <b>Poll cooling down</b>\n<i>Retry in ~30s — protects Gmail quota (250 qps)</i>' };
+    return { text: '⏳ <b>Slow down — poll cooling down</b>\n<i>Retry in ~30s. Tip: protects Gmail quota (250 qps)</i>' };
   }
 
   try {
@@ -512,7 +536,7 @@ export async function handlePollTrigger(chatId: string): Promise<{ text: string;
 
 export async function handleWatchTrigger(chatId: string): Promise<{ text: string; replyMarkup?: unknown }> {
   if (isRateLimited(chatId, 'watch', 1, 60_000)) {
-    return { text: '⏳ <b>Watch cooling down</b>\n<i>Retry in ~60s</i>' };
+    return { text: '⏳ <b>Slow down — watch cooling down</b>\n<i>Retry in ~60s. Tip: try again shortly</i>' };
   }
 
   setImmediate(async () => {
@@ -537,8 +561,8 @@ type Handler = (chatId: string, args: string[]) => Promise<{ text: string; reply
 
 export async function handleExportWrapper(chatId: string, args: string[]): Promise<{ text: string; replyMarkup?: unknown } | string> {
   const { isLoggedIn } = await import('./session');
-  if (!isLoggedIn(chatId)) return '🔒 Please /login <password> first — session 24h or after restart';
-  if (isRateLimited(chatId, 'export', 5, 60_000)) return '⏳ Export cooling down — retry in ~30s';
+  if (!isLoggedIn(chatId)) return buildWelcomeReply();
+  if (isRateLimited(chatId, 'export', 5, 60_000)) return '⏳ Slow down — export cooling down, retry in ~30s. Tip: try again shortly';
   try {
     const { handleExport } = await import('./export');
     return await handleExport(args, chatId);
@@ -550,7 +574,7 @@ export async function handleExportWrapper(chatId: string, args: string[]): Promi
 
 export async function handleDuplicatesWrapper(chatId: string, _args: string[]): Promise<{ text: string; replyMarkup?: unknown } | string> {
   const { isLoggedIn } = await import('./session');
-  if (!isLoggedIn(chatId)) return '🔒 Please /login <password> first — session 24h or after restart';
+  if (!isLoggedIn(chatId)) return buildWelcomeReply();
   try {
     const { handleDuplicates } = await import('./export');
     return await handleDuplicates();
@@ -562,7 +586,7 @@ export async function handleDuplicatesWrapper(chatId: string, _args: string[]): 
 
 export async function handleSummaryWrapper(chatId: string, _args: string[]): Promise<{ text: string; replyMarkup?: unknown } | string> {
   const { isLoggedIn } = await import('./session');
-  if (!isLoggedIn(chatId)) return '🔒 Please /login <password> first — session 24h or after restart';
+  if (!isLoggedIn(chatId)) return buildWelcomeReply();
   try {
     const { handleSummary } = await import('./export');
     return await handleSummary();
@@ -643,12 +667,12 @@ export async function handleTelegramUpdate(update: unknown): Promise<{ text: str
       try {
         const { isLoggedIn } = await import('./session');
         if (!isLoggedIn(chatId)) {
-          return '🔒 Please /login <password> first — session 24h or after restart';
+          return buildWelcomeReply();
         }
       } catch {}
 
       if (isRateLimited(chatId, 'verify', 5, 60_000)) {
-        return '⏳ Verify cooling down — retry in ~30s';
+        return '⏳ Slow down — verify cooling down, retry in ~30s. Tip: try again shortly';
       }
 
       // resolve fileId and mime
@@ -703,6 +727,13 @@ export async function handleTelegramUpdate(update: unknown): Promise<{ text: str
     if (!h) return `Unknown command /${escapeHtml(cmd)}. Try /help`;
     const chatId = String((u.message!.chat?.id ?? u.message!.from?.id ?? '') as string | number);
     if (!chatId) return null;
+    // Forward message_id for /login delete path
+    if (cmd === 'login') {
+      const mid = (u.message as { message_id?: number })?.message_id;
+      const result = await handleLogin(chatId, args, typeof mid === 'number' ? mid : undefined);
+      if (typeof result === 'string') return result;
+      return result ?? null;
+    }
     const result = await h(chatId, args);
     if (typeof result === 'string') return result;
     return result ?? null;

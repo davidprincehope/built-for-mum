@@ -18,7 +18,6 @@ export function parseLagosDateRange(args: string[]): { from: string; to: string 
     return { error: 'no-args' } as unknown as { error: string };
   }
   if (normalized.length === 1) {
-    // single date unsupported, require pair
     return { error: 'Invalid date — use DD/MM/YYYY or YYYY-MM-DD Africa/Lagos' };
   }
   if (normalized.length === 2) {
@@ -28,13 +27,11 @@ export function parseLagosDateRange(args: string[]): { from: string; to: string 
     if (from > to) return { error: 'Invalid range — from date is after to date' };
     return { from, to };
   }
-  // >2 args invalid
   return { error: 'Invalid date — use DD/MM/YYYY or YYYY-MM-DD Africa/Lagos' };
 }
 
 function parseDateArg(value: string): string | null {
   const v = value.trim();
-  // DD/MM/YYYY
   if (v.includes('/')) {
     const d = parse(v, 'dd/MM/yyyy', new Date());
     if (!isValid(d)) return null;
@@ -43,14 +40,44 @@ function parseDateArg(value: string): string | null {
     const dd = String(d.getDate()).padStart(2, '0');
     return `${yyyy}-${mm}-${dd}`;
   }
-  // YYYY-MM-DD
   try {
     const d = parseISO(v);
     if (!isValid(d)) return null;
-    // validate format exactly YYYY-MM-DD
     if (!/^\d{4}-\d{2}-\d{2}$/.test(v)) return null;
     return v;
   } catch { return null; }
+}
+
+type TxRow = {
+  amount: string;
+  currency: string;
+  transaction_date: string;
+  transaction_time: string | null;
+  description: string;
+  sender_name: string;
+  branch: string | null;
+  available_balance: string | null;
+};
+
+function renderTxCard(row: TxRow): string {
+  const cleaned = extractSender(row.description).senderName || row.sender_name || '—';
+  const via = row.description.includes('NIP') ? 'NIP' : row.description.includes('KUDA') ? 'KUDA' : 'Zenith';
+  const datePart = escapeHtml((row.transaction_date ?? '').slice(0, 10));
+  const timePart = row.transaction_time ? ` <code>${escapeHtml(row.transaction_time.slice(0, 5))}</code>` : '';
+  const branchLine = row.branch ? `🔖 <b>Branch:</b> <code>${escapeHtml(row.branch)}</code>` : null;
+  const balanceLine = row.available_balance ? `💰 <b>Balance:</b> <code>${escapeHtml(row.available_balance)}</code>` : null;
+  const descCleaned = escapeHtml(cleaned).slice(0, 60);
+  const viaEsc = escapeHtml(via);
+  const lines = [
+    `💳 <b>${escapeHtml(row.amount)} ${escapeHtml(row.currency)}</b>`,
+    `👤 <b>Sender:</b> <code>${escapeHtml(cleaned)}</code>`,
+    `📅 <b>Date:</b> <code>${datePart}</code>${timePart} <i>Africa/Lagos</i>`,
+    `🏦 <b>via ${viaEsc}</b>`,
+    branchLine,
+    `📝 <i>${descCleaned} via ${viaEsc}</i>`,
+    balanceLine,
+  ].filter(Boolean).join('\n');
+  return lines;
 }
 
 export async function handleHistoryWithRange(args: string[], opts?: { limit?: number; offset?: number }): Promise<{ text: string; replyMarkup?: unknown }> {
@@ -60,38 +87,77 @@ export async function handleHistoryWithRange(args: string[], opts?: { limit?: nu
   let limit = opts?.limit ?? 10;
   let offset = opts?.offset ?? 0;
 
-  limit = Math.max(1, Math.min(50, Math.floor(limit)));
+  limit = Math.max(1, Math.min(10, Math.floor(limit)));
   offset = Math.max(0, Math.floor(offset));
 
-  // Handle callback_data encoded as "/history from to limit offset"
-  // args may already be split; if no args -> default last 5
   if (!args || args.length === 0) {
-    limit = 5;
-    // default: recent without date filter
+    limit = Math.min(limit, 10);
     try {
       const result = await withTimeout(
-        pool.query<{ amount: string; currency: string; transaction_date: string; transaction_time: string; description: string; sender_name: string; branch: string | null; available_balance: string | null }>(
+        pool.query<TxRow>(
           `SELECT amount::text AS amount, currency, transaction_date::text AS transaction_date, transaction_time::text AS transaction_time, description, sender_name, branch, available_balance::text AS available_balance FROM transactions ORDER BY transaction_date DESC, transaction_time DESC, created_at DESC LIMIT $1 OFFSET $2`,
           [limit, offset],
         ),
         5000,
         { rows: [] } as unknown as import('pg').QueryResult<never>,
       );
-      const rows = (result as { rows: Array<Record<string, string>> }).rows ?? [];
+      const rows = (result as { rows: Array<TxRow> }).rows ?? [];
       if (!rows.length) return { text: '📭 <b>History</b>\n<i>No transactions yet</i>' };
-      return formatRows(rows as unknown as Array<{ amount: string; currency: string; transaction_date: string; transaction_time: string; description: string; sender_name: string }>, { from: '', to: '', total: rows.length, limit, offset, isDefault: true });
+      // For default view, total unknown — use rows length as placeholder, no pagination beyond next check
+      // Fetch count for pagination if rows == limit
+      let total = rows.length;
+      if (rows.length === limit) {
+        try {
+          const cnt = await withTimeout(
+            pool.query<{ count: string }>(`SELECT COUNT(*)::text AS count FROM transactions`),
+            2000,
+            { rows: [{ count: String(rows.length) }] } as unknown as import('pg').QueryResult<{ count: string }>,
+          );
+          total = Number((cnt as { rows: Array<{ count: string }> }).rows[0]?.count ?? String(rows.length));
+        } catch { total = rows.length; }
+      }
+      return formatRows(rows, { from: '', to: '', total, limit, offset, isDefault: true });
     } catch {
       return { text: '⚠️ History unavailable — DB error' };
     }
   }
 
-  // detect 4-arg pagination form: from to limit offset
+  // pagination for default recent: "/history 10 10" => limit offset
+  if (args.length === 2 && /^\d+$/.test(args[0]) && /^\d+$/.test(args[1])) {
+    limit = Math.max(1, Math.min(10, Number(args[0])));
+    offset = Math.max(0, Number(args[1]));
+    try {
+      const result = await withTimeout(
+        pool.query<TxRow>(
+          `SELECT amount::text AS amount, currency, transaction_date::text AS transaction_date, transaction_time::text AS transaction_time, description, sender_name, branch, available_balance::text AS available_balance FROM transactions ORDER BY transaction_date DESC, transaction_time DESC, created_at DESC LIMIT $1 OFFSET $2`,
+          [limit, offset],
+        ),
+        5000,
+        { rows: [] } as unknown as import('pg').QueryResult<never>,
+      );
+      const rows2 = (result as { rows: Array<TxRow> }).rows ?? [];
+      if (!rows2.length) return { text: '📭 <b>History</b>\n<i>No more transactions</i>' };
+      let total2 = rows2.length + offset;
+      try {
+        const cnt = await withTimeout(
+          pool.query<{ count: string }>(`SELECT COUNT(*)::text AS count FROM transactions`),
+          2000,
+          { rows: [{ count: String(total2) }] } as unknown as import('pg').QueryResult<{ count: string }>,
+        );
+        total2 = Number((cnt as { rows: Array<{ count: string }> }).rows[0]?.count ?? String(total2));
+      } catch {}
+      return formatRows(rows2, { from: '', to: '', total: total2, limit, offset, isDefault: true });
+    } catch {
+      return { text: '⚠️ History unavailable — DB error' };
+    }
+  }
+
   if (args.length === 4 && /^\d+$/.test(args[2]) && /^\d+$/.test(args[3])) {
     const maybeFrom = parseDateArg(args[0]);
     const maybeTo = parseDateArg(args[1]);
     if (maybeFrom && maybeTo) {
       from = maybeFrom; to = maybeTo;
-      limit = Math.max(1, Math.min(50, Number(args[2])));
+      limit = Math.max(1, Math.min(10, Number(args[2])));
       offset = Math.max(0, Number(args[3]));
     }
   }
@@ -105,13 +171,11 @@ export async function handleHistoryWithRange(args: string[], opts?: { limit?: nu
       from = (parsed as { from: string }).from;
       to = (parsed as { from: string; to: string }).to;
     } else if (args.length !== 4) {
-      // try to parse first two as dates; if fails return error
       const parsed = parseLagosDateRange(args.slice(0, 2));
       if ('error' in parsed) {
         const err = (parsed as { error: string }).error;
         if (err !== 'no-args') return { text: escapeHtml(err) };
       }
-      // fallback to unfiltered if no date args? treat as invalid
       if (!from) return { text: 'Invalid date — use DD/MM/YYYY or YYYY-MM-DD Africa/Lagos' };
     }
   }
@@ -130,63 +194,52 @@ export async function handleHistoryWithRange(args: string[], opts?: { limit?: nu
     const total = Number((countResult as { rows: Array<{ count: string }> }).rows[0]?.count ?? '0');
 
     const rowsResult = await withTimeout(
-      pool.query<{
-        amount: string;
-        currency: string;
-        transaction_date: string;
-        transaction_time: string;
-        description: string;
-        sender_name: string;
-        branch: string | null;
-        available_balance: string | null;
-      }>(
+      pool.query<TxRow>(
         `SELECT amount::text AS amount, currency, transaction_date::text AS transaction_date, transaction_time::text AS transaction_time, description, sender_name, branch, available_balance::text AS available_balance FROM transactions WHERE transaction_date::date BETWEEN $1::date AND $2::date ORDER BY transaction_date DESC, transaction_time DESC, created_at DESC LIMIT $3 OFFSET $4`,
         [from, to, limit, offset],
       ),
       5000,
       { rows: [] } as unknown as import('pg').QueryResult<never>,
     );
-    const rows = (rowsResult as { rows: Array<Record<string, string>> }).rows ?? [];
+    const rows = (rowsResult as { rows: Array<TxRow> }).rows ?? [];
     if (!rows.length) {
       return { text: `📭 <b>History</b> ${escapeHtml(from)} → ${escapeHtml(to)}\n<i>No transactions in range</i>\nTotal: 0 in range` };
     }
-    return formatRows(rows as unknown as Array<{ amount: string; currency: string; transaction_date: string; transaction_time: string; description: string; sender_name: string }>, { from, to, total, limit, offset, isDefault: false });
+    return formatRows(rows, { from, to, total, limit, offset, isDefault: false });
   } catch {
     return { text: '⚠️ History unavailable — DB error' };
   }
 }
 
 function formatRows(
-  rows: Array<{ amount: string; currency: string; transaction_date: string; transaction_time: string; description: string; sender_name: string }>,
+  rows: Array<TxRow>,
   ctx: { from: string; to: string; total: number; limit: number; offset: number; isDefault: boolean },
 ): { text: string; replyMarkup?: unknown } {
-  const header = ` # │ Amount      │ Sender          │ Date`;
-  const divider = `───┼─────────────┼─────────────────┼────────────`;
-  const lines = rows.map((r, i) => {
-    const num = String(ctx.offset + i + 1).padStart(2, ' ');
-    const amt = `${r.amount} ${r.currency}`.padEnd(11, ' ');
-    const senderRaw = extractSender(r.description).senderName || r.sender_name || '';
-    const sender = senderRaw.substring(0, 17).padEnd(17, ' ');
-    const date = (r.transaction_date ?? '').slice(0, 10);
-    return `${num} │ ${amt} │ ${sender} │ ${date}`;
-  });
-  const table = [header, divider, ...lines].join('\n');
-  const totalLine = ctx.isDefault
-    ? `Total: ${rows.length} shown`
-    : `Total: ${ctx.total} in range${ctx.total > rows.length ? ', use narrower dates or /export' : ''}`;
+  const cards = rows.map((r) => renderTxCard(r));
+  const divider = '\n━━━━━━━━━━━━\n';
+  let joined = cards.join(divider);
+
   const rangeHeader = ctx.isDefault
     ? `💳 <b>Recent Transactions</b> <i>(last ${rows.length})</i>`
     : `💳 <b>History</b> <i>${escapeHtml(ctx.from)} → ${escapeHtml(ctx.to)}</i>`;
 
-  const text = [
-    rangeHeader,
-    '━━━━━━━━━━━━━━━━━━━━',
-    `<pre>${escapeHtml(table)}</pre>`,
-    `<i>${escapeHtml(totalLine)}</i>`,
-  ].join('\n');
+  // Enforce 10 per message already via limit; if rendered text exceeds 3800 drop last whole cards
+  const headerWithDiv = `${rangeHeader}\n━━━━━━━━━━━━━━━━━━━━\n`;
+  let text = headerWithDiv + joined;
 
-  let out = text;
-  if (out.length > 4000) out = out.slice(0, 3990) + '\n… truncated';
+  // 4096 safe: if exceeds 3800, drop last whole cards then append truncation hint
+  if (text.length > 3800) {
+    let kept = [...cards];
+    while (kept.length > 1 && (headerWithDiv + kept.join(divider)).length > 3800) {
+      kept.pop();
+    }
+    const dropped = cards.length - kept.length;
+    joined = kept.join(divider);
+    const suffix = dropped > 0 ? `\n… + ${dropped} more — tap Next 10` : '';
+    text = headerWithDiv + joined + suffix;
+  }
+
+  if (text.length > 4000) text = text.slice(0, 3990) + '\n… truncated';
 
   const hasNext = ctx.offset + ctx.limit < ctx.total;
   const hasPrev = ctx.offset > 0;
@@ -194,14 +247,25 @@ function formatRows(
   const navRow: Array<{ text: string; callback_data: string }> = [];
   if (hasPrev) {
     const prevOff = Math.max(0, ctx.offset - ctx.limit);
-    navRow.push({ text: '⬅️ Prev', callback_data: `/history ${ctx.from} ${ctx.to} ${ctx.limit} ${prevOff}` });
+    const cbFrom = ctx.from || 'recent';
+    const cbTo = ctx.to || 'recent';
+    // Keep short ≤40B: use from/to only if not default; otherwise use simple offset
+    if (ctx.isDefault) {
+      navRow.push({ text: '⬅️ Prev', callback_data: `/history 10 ${prevOff}` });
+    } else {
+      navRow.push({ text: '⬅️ Prev', callback_data: `/history ${ctx.from} ${ctx.to} ${ctx.limit} ${prevOff}` });
+    }
   }
   if (hasNext) {
     const nextOff = ctx.offset + ctx.limit;
-    navRow.push({ text: 'Next ➡️', callback_data: `/history ${ctx.from} ${ctx.to} ${ctx.limit} ${nextOff}` });
+    if (ctx.isDefault) {
+      navRow.push({ text: 'Next 10 ➡️', callback_data: `/history 10 ${nextOff}` });
+    } else {
+      navRow.push({ text: 'Next 10 ➡️', callback_data: `/history ${ctx.from} ${ctx.to} ${ctx.limit} ${nextOff}` });
+    }
   }
   if (navRow.length) buttons.push(navRow);
 
   const replyMarkup = buttons.length ? { inline_keyboard: buttons } : undefined;
-  return { text: out, replyMarkup };
+  return { text, replyMarkup };
 }
