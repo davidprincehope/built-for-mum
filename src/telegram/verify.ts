@@ -138,7 +138,12 @@ export function extractFreeForm(text: string): ReturnType<typeof parseFreeForm> 
   return parseFreeForm(text);
 }
 
+let __pdfTextOverride: string | null = null;
+export function __setPdfTextOverride(v: string | null): void {
+  __pdfTextOverride = v;
+}
 export async function extractPdfText(buffer: Buffer): Promise<string> {
+  if (__pdfTextOverride !== null) return __pdfTextOverride;
   try {
     // pdf-parse: require dynamically to allow mocking in tests
     const pdfParse = (await import('pdf-parse')).default as unknown as (b: Buffer) => Promise<{ text: string }>;
