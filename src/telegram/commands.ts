@@ -77,12 +77,23 @@ export async function handleLogout(chatId: string): Promise<{ text: string }> {
   return { text: '👋 Logged out' };
 }
 
-// --- verify / search stubs with rate-limit tuning per D-14 ---
-export async function handleVerifyStub(chatId: string, _args: string[]): Promise<{ text: string }> {
+// --- verify / search with rate-limit tuning per D-14 ---
+export async function handleVerifyStub(chatId: string, args: string[]): Promise<{ text: string }> {
   if (isRateLimited(chatId, 'verify', 5, 60_000)) {
-    return { text: '⏳ Verify cooling down — retry in ~60s' };
+    return { text: '⏳ Verify cooling down — retry in ~30s' };
   }
-  return { text: '🔍 Verify coming in 02-02 — send image/PDF/text with /verify' };
+  const freeText = (args ?? []).join(' ').trim();
+  if (freeText) {
+    try {
+      const { handleVerify } = await import('./verify');
+      const reply = await handleVerify({ chatId, freeFormText: freeText });
+      return { text: reply };
+    } catch (e) {
+      logger.warn({ err: e, chatId }, 'handleVerify stub free-form failed');
+      return { text: '⚠️ Verify failed — try again' };
+    }
+  }
+  return { text: 'Send a photo/PDF with caption or type /verify 100k 2026-09-09 SAMPLE SENDER' };
 }
 
 export async function handleSearchStub(chatId: string, _args: string[]): Promise<{ text: string }> {
@@ -512,7 +523,14 @@ const handlers: Record<string, Handler> = {
 export async function handleTelegramUpdate(update: unknown): Promise<{ text: string; replyMarkup?: unknown } | string | null> {
   try {
     const u = update as {
-      message?: { text?: string; chat?: { id?: number | string }; from?: { id?: number | string } };
+      message?: {
+        text?: string;
+        caption?: string;
+        photo?: Array<{ file_id: string; file_size?: number }>;
+        document?: { file_id: string; mime_type?: string; file_name?: string; file_size?: number };
+        chat?: { id?: number | string };
+        from?: { id?: number | string };
+      };
       callback_query?: { data?: string; message?: { chat?: { id?: number | string } }; from?: { id?: number | string } };
     };
     // Handle callback queries from inline keyboards
@@ -527,6 +545,68 @@ export async function handleTelegramUpdate(update: unknown): Promise<{ text: str
       const result = await h(chatId, args);
       if (typeof result === 'string') return result;
       return result ?? null;
+    }
+
+    // Media verify branch — photo/document with optional caption, implicit verify if logged in
+    const msg = u?.message;
+    if (msg && (msg.photo || msg.document)) {
+      const chatId = String((msg.chat?.id ?? msg.from?.id ?? '') as string | number);
+      if (!chatId) return null;
+
+      // login gate before any download — no token burn for unauth
+      try {
+        const { isLoggedIn } = await import('./session');
+        if (!isLoggedIn(chatId)) {
+          return '🔒 Please /login <password> first — session 24h or after restart';
+        }
+      } catch {}
+
+      if (isRateLimited(chatId, 'verify', 5, 60_000)) {
+        return '⏳ Verify cooling down — retry in ~30s';
+      }
+
+      // resolve fileId and mime
+      let fileId: string | undefined;
+      let mime: string | undefined;
+      let isPdf = false;
+      if (msg.photo && msg.photo.length > 0) {
+        const { getLargestPhotoId } = await import('./media');
+        const largest = getLargestPhotoId(msg.photo);
+        if (largest) {
+          fileId = largest;
+          mime = 'image/jpeg';
+        }
+      }
+      if (!fileId && msg.document) {
+        fileId = msg.document.file_id;
+        mime = msg.document.mime_type ?? (msg.document.file_name?.toLowerCase().endsWith('.pdf') ? 'application/pdf' : 'image/jpeg');
+        isPdf = mime === 'application/pdf' || (msg.document.file_name?.toLowerCase().endsWith('.pdf') ?? false);
+      }
+
+      if (fileId) {
+        const caption = msg.caption?.trim() ?? '';
+        // caption may contain "/verify ..." — strip prefix if present
+        let captionForVerify: string | undefined = caption || undefined;
+        if (captionForVerify && captionForVerify.startsWith('/verify')) {
+          const { args } = parseCommandText(captionForVerify);
+          captionForVerify = args.join(' ') || undefined;
+        }
+        // If caption empty and isPdf false and photo, allow verify with no caption (will hit vision)
+        try {
+          const { handleVerify } = await import('./verify');
+          const reply = await handleVerify({
+            chatId,
+            fileId,
+            mime,
+            caption: captionForVerify,
+            isPdf,
+          });
+          return reply;
+        } catch (e) {
+          logger.warn({ err: e, chatId }, 'handleTelegramUpdate media verify failed');
+          return '⚠️ Verify failed — try again';
+        }
+      }
     }
 
     const text = u?.message?.text?.trim() ?? '';
