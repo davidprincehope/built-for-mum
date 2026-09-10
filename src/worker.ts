@@ -241,12 +241,134 @@ export function _resetWorkerStateForTests(): void {
   if (watchTimer) { clearInterval(watchTimer); watchTimer = null; }
   if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
   if (stalenessTimer) { clearInterval(stalenessTimer); stalenessTimer = null; }
+  try { const { _resetRingForTests } = require('./telegram/ringBuffer'); _resetRingForTests(); } catch {}
+  try { const { _resetRateLimitForTests } = require('./telegram/rateLimit'); _resetRateLimitForTests(); } catch {}
+  try { const { _resetStalenessStateForTests } = require('./observability/staleness'); _resetStalenessStateForTests(); } catch {}
+  try { const { _resetPollRunningForTests } = require('./gmail/poll'); _resetPollRunningForTests(); } catch {}
+}
+
+async function registerTelegramWebhookIfConfigured(): Promise<void> {
+  const webhookUrl = process.env.TELEGRAM_WEBHOOK_URL ?? '';
+  const secret = process.env.TELEGRAM_WEBHOOK_SECRET ?? '';
+  let token = process.env.TELEGRAM_BOT_TOKEN ?? '';
+  if (!token) {
+    const alertUrl = process.env.ALERT_WEBHOOK_URL ?? '';
+    const m = alertUrl.match(/api\.telegram\.org\/bot([^\/\s]+)/);
+    if (m) token = m[1];
+  }
+  if (!webhookUrl || !secret || !token) {
+    logger.debug('telegram webhook not configured — skipping registration');
+    return;
+  }
+  const api = `https://api.telegram.org/bot${token}`;
+  try {
+    const setRes = await fetch(`${api}/setWebhook`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        url: webhookUrl,
+        secret_token: secret,
+        allowed_updates: ['message'],
+        max_connections: 40,
+        drop_pending_updates: true,
+      }),
+    });
+    const setJson = await setRes.json().catch(() => ({})) as { ok?: boolean; description?: string };
+    if (!setRes.ok || setJson.ok === false) {
+      logger.warn({ status: setRes.status, description: (setJson as { description?: string }).description }, 'telegram setWebhook failed');
+    } else {
+      logger.info({ webhookUrl }, 'telegram webhook registered');
+    }
+    // health check
+    try {
+      const infoRes = await fetch(`${api}/getWebhookInfo`);
+      const infoJson = await infoRes.json().catch(() => ({})) as { result?: { pending_update_count?: number; last_error_message?: string; url?: string } };
+      const r = infoJson.result;
+      if (r) logger.info({ pending_update_count: r.pending_update_count, last_error_message: r.last_error_message, url: r.url }, 'telegram getWebhookInfo');
+    } catch (e) {
+      logger.warn({ err: e }, 'telegram getWebhookInfo failed');
+    }
+  } catch (err) {
+    logger.warn({ err }, 'telegram webhook registration failed — boot continues');
+  }
+}
+
+export function getHttpServerForTests(): import('http').Server | null {
+  return httpServer;
 }
 
 function createHttpServer(): import('http').Server {
   const http = require('http') as typeof import('http');
   const server = http.createServer(async (req: import('http').IncomingMessage, res: import('http').ServerResponse) => {
     const url = req.url ?? '/';
+    // Telegram webhook — verify before any body parse beyond header check
+    if (req.method === 'POST' && url.startsWith('/telegram/webhook')) {
+      try {
+        const { verifySecretToken, readJsonBody, extractChatId, parseCommandText } = await import('./telegram/webhook');
+        const { isAllowedChat } = await import('./telegram/allowlist');
+        const { isRateLimited } = await import('./telegram/rateLimit');
+        const { handleTelegramUpdate } = await import('./telegram/commands');
+        const { sendTelegramMessage } = await import('./telegram/sendMessage');
+
+        if (!verifySecretToken(req)) {
+          res.statusCode = 403;
+          res.end('forbidden');
+          return;
+        }
+
+        const body = await readJsonBody(req);
+        const chatId = extractChatId(body);
+
+        if (!chatId || !isAllowedChat(chatId)) {
+          logger.warn({ chatId: chatId ?? 'unknown', url }, 'telegram webhook blocked — not allowlisted');
+          res.statusCode = 200;
+          res.end('OK');
+          return;
+        }
+
+        // Global per-chat rate limit 15/10s
+        if (isRateLimited(chatId, 'global', 15, 10_000)) {
+          logger.warn({ chatId }, 'telegram global rate limited');
+          if (!res.writableEnded) { res.statusCode = 200; res.end('OK'); }
+          try { await sendTelegramMessage(chatId, '⏳ rate limited — slow down'); } catch {}
+          return;
+        }
+
+        // Parse command for logging; per-command poll/watch limits handled inside command handlers
+        const rawText: string = (body as { message?: { text?: string } })?.message?.text ?? '';
+        const { cmd } = parseCommandText(rawText);
+        logger.info({ chatId, cmd: cmd || '(non-command)' }, 'telegram webhook dispatch');
+
+        let reply: string | null = null;
+        try {
+          reply = await handleTelegramUpdate(body);
+        } catch (err) {
+          logger.warn({ err, chatId }, 'handleTelegramUpdate threw — suppressed');
+          reply = null;
+        }
+
+        // Always ack 200 before slow follow-up; poll/watch already do setImmediate off-path
+        if (!res.writableEnded) {
+          res.statusCode = 200;
+          res.end('OK');
+        }
+
+        if (reply) {
+          // For poll/watch, reply is the immediate ack; follow-up is sent off-path inside handler
+          // For other commands, reply is the final answer
+          try {
+            await sendTelegramMessage(chatId, reply);
+          } catch (err) {
+            logger.warn({ err, chatId }, 'sendTelegramMessage failed after webhook');
+          }
+        }
+        return;
+      } catch (err) {
+        logger.error({ err }, 'telegram webhook handler error');
+        if (!res.writableEnded) { res.statusCode = 200; res.end('OK'); }
+        return;
+      }
+    }
     if (req.method === 'POST' && url.startsWith('/gmail/pubsub')) {
       let body = '';
       req.on('data', (chunk: Buffer) => { body += chunk.toString(); });
@@ -302,6 +424,13 @@ export async function start(): Promise<void> {
     });
     httpServer!.on('error', reject);
   });
+
+  // Telegram webhook registration (if env configured) — must not fail boot
+  try {
+    await registerTelegramWebhookIfConfigured();
+  } catch (e) {
+    logger.warn({ err: e }, 'telegram webhook registration error — continuing');
+  }
 
   // Watch renewal (24h) — boot register attempt
   try {
