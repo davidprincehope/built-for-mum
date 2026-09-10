@@ -22,6 +22,32 @@ const envSchema = z.object({
   ALERT_FALLBACK_WEBHOOK_URL: z.string().optional().default(''),
   TELEGRAM_CHAT_ID: z.string().optional().default(''),
   ALERT_CHAT_ID: z.string().optional().default(''),
+  TELEGRAM_BOT_TOKEN: z.string().optional().default(''),
+  TELEGRAM_WEBHOOK_SECRET: z
+    .string()
+    .optional()
+    .default('')
+    .refine((v) => v === '' || /^[A-Za-z0-9_-]{1,256}$/.test(v), {
+      message: 'TELEGRAM_WEBHOOK_SECRET must be 1-256 chars matching A-Za-z0-9_-',
+    }),
+  TELEGRAM_ADMIN_CHAT_IDS: z.string().optional().default(''),
+  TELEGRAM_WEBHOOK_URL: z
+    .string()
+    .optional()
+    .default('')
+    .refine(
+      (v) => {
+        if (v === '') return true;
+        try {
+          new URL(v);
+          return true;
+        } catch {
+          return false;
+        }
+      },
+      { message: 'TELEGRAM_WEBHOOK_URL must be a valid URL' },
+    ),
+  TELEGRAM_WEBHOOK_PATH: z.string().optional().default('/telegram/webhook'),
   STALENESS_THRESHOLD_MINUTES: z.coerce.number().int().positive().default(60),
   BUSINESS_HOURS_START: z.string().regex(/^\d{2}:\d{2}$/).default('07:00'),
   BUSINESS_HOURS_END: z.string().regex(/^\d{2}:\d{2}$/).default('21:00'),
