@@ -13,6 +13,7 @@ WhatsApp-based payment verification with Zenith Bank as source of truth: Gmail i
 - [ ] **Phase 4: Matching Engine** - Deterministic reference/amount/date matching with atomic claim
 - [ ] **Phase 5: Retry & Reconciliation** - 60s retry, 5-min agent window, 48h background reconciliation
 - [ ] **Phase 6: Production Hardening** - Rate limiting, validation, monitoring, admin tools
+- [ ] **Phase 7: UX Overhaul** - Drastically improve horrible UX at every interaction point, display to use, more intuitive
 
 ## Phase Details
 
@@ -122,3 +123,17 @@ Plans:
   1. System handles abuse, retains audit trail, and is operable via dashboard
 
 **Plans**: TBD
+
+### Phase 7: UX Overhaul
+**Goal**: Drastically improve horrible UX at every point of interaction — display to use, more intuitive
+**Depends on**: Phase 2
+**Requirements**: D-01 card-per-TX 10/page, D-02 status card, D-04 help+keyboard, D-05/D-15 Menu Button, D-06 login, D-07 any image=verify, D-08 NL history, D-09 rich FOUND, D-10 near-matches, D-11 cleaned sender, D-12 Verifying edit, D-13 Welcome, D-14 friendly errors, D-16 slash-less search, D-17 deleteMessage
+**Success Criteria**:
+  1. Every Telegram interaction is intuitive, professional, and requires minimal admin effort
+  2. Display is clean, consistent, and guides the admin naturally
+**Plans**: 3 plans — 07-01 tracer (deleteMessage/Welcome/card-per-TX/Menu/friendly errors), 07-02 verify polish (FOUND/NOT_FOUND/Verifying edit/cleaned sender/near-matches), 07-03 NL history + slash-less + pagination
+
+Plans:
+- [ ] 07-01-PLAN.md — Tracer: deleteMessage for /login, card-per-TX history 10/page, Welcome card, friendly errors, Menu Button on PORT 8080
+- [ ] 07-02-PLAN.md — Verify polish: rich FOUND/NOT_FOUND cards, Verifying… then edit, cleaned sender, near-matches threshold
+- [ ] 07-03-PLAN.md — NL history via gemma + slash-less search/history + inline pagination 10/page
