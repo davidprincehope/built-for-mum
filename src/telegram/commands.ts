@@ -77,6 +77,21 @@ export async function handleLogout(chatId: string): Promise<{ text: string }> {
   return { text: '👋 Logged out' };
 }
 
+// --- verify / search stubs with rate-limit tuning per D-14 ---
+export async function handleVerifyStub(chatId: string, _args: string[]): Promise<{ text: string }> {
+  if (isRateLimited(chatId, 'verify', 5, 60_000)) {
+    return { text: '⏳ Verify cooling down — retry in ~60s' };
+  }
+  return { text: '🔍 Verify coming in 02-02 — send image/PDF/text with /verify' };
+}
+
+export async function handleSearchStub(chatId: string, _args: string[]): Promise<{ text: string }> {
+  if (isRateLimited(chatId, 'search', 10, 60_000)) {
+    return { text: '⏳ Search cooling down — retry in ~60s' };
+  }
+  return { text: '🔍 Search coming in 02-03 — try /history with dates for now' };
+}
+
 // --- help with professional UI and inline keyboard ---
 
 export function buildHelpReply(): { text: string; replyMarkup?: unknown } {
@@ -93,16 +108,24 @@ export function buildHelpReply(): { text: string; replyMarkup?: unknown } {
     '  /health  —  Alias for /status',
     '  /logs <i>[n] [level]</i>  —  Tail worker logs <code>(20 warn)</code>',
     '',
-    '💳 <b>Transactions</b>',
+    '💳 <b>Ledger</b>',
     '  /balance  —  Available & current + last TX',
-    '  /history <i>[from to]</i>  —  Range Lagos DD/MM/YYYY or YYYY-MM-DD',
+    '  /history <i>[from to]</i>  —  Range Lagos DD/MM/YYYY or YYYY-MM-DD capped 50',
+    '  /search <i>query</i>  —  Full-text AI search (upcoming)',
+    '  /verify <i>[text]</i> + image/PDF  —  Verify transaction (upcoming)',
     '  /suspicious <i>[n]</i>  —  Last <i>n</i> spoofs <code>(5)</code>',
     '',
-    '⚡ <b>Actions</b>',
+    '📈 <b>Analytics</b>',
+    '  /summary  —  24h/7d counts & sums (upcoming)',
+    '  /export <i>[from to]</i>  —  CSV via document (upcoming)',
+    '  /duplicates  —  Hunt duplicates GROUP BY (upcoming)',
+    '',
+    '⚡ <b>Ops</b>',
     '  /poll    —  Trigger Gmail poll <i>(30s cooldown)</i>',
     '  /watch   —  Re-register Gmail watch <i>(60s cooldown)</i>',
+    '  /logout  —  End 24h session',
     '',
-    '💡 <i>Examples:</i> <code>/login secret</code>  <code>/balance</code>  <code>/history 01/09/2026 10/09/2026</code>',
+    '💡 <i>Examples:</i> <code>/login secret</code>  <code>/balance</code>  <code>/history 01/09/2026 10/09/2026</code>  <code>/search SAMPLE SENDER 100k</code>',
     '',
     '🔗 <a href="https://example.com/health">Health endpoint</a> • <code>Africa/Lagos</code>',
   ].join('\n');
@@ -111,17 +134,20 @@ export function buildHelpReply(): { text: string; replyMarkup?: unknown } {
     inline_keyboard: [
       [
         { text: '📊 Status', callback_data: '/status' },
-        { text: '📜 History', callback_data: '/history' },
+        { text: '💰 Balance', callback_data: '/balance' },
       ],
       [
+        { text: '📜 History', callback_data: '/history' },
         { text: '📋 Logs', callback_data: '/logs' },
-        { text: '⚡ Poll', callback_data: '/poll' },
       ],
-      [{ text: '🔄 Watch', callback_data: '/watch' }],
+      [
+        { text: '⚡ Poll', callback_data: '/poll' },
+        { text: '🔄 Watch', callback_data: '/watch' },
+      ],
     ],
   };
 
-  return { text, replyMarkup };
+  return { text: truncate(text, 4000), replyMarkup };
 }
 
 // --- status/health with professional cards ---
@@ -475,6 +501,8 @@ const handlers: Record<string, Handler> = {
       return handleHistory(args[0]);
     }
   },
+  verify: async (chatId, args) => handleVerifyStub(chatId, args),
+  search: async (chatId, args) => handleSearchStub(chatId, args),
   suspicious: async (chatId, args) => handleSuspicious(args[0]),
   logs: async (chatId, args) => handleLogs(args[0] ? Number(args[0]) : undefined, args[1]),
   poll: async (chatId) => handlePollTrigger(chatId),
