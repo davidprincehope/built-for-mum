@@ -8,7 +8,7 @@ WhatsApp-based payment verification with Zenith Bank as source of truth: Gmail i
 
 - [x] **Phase 1: Zenith Email Ingestion** - Trustworthy transaction ledger from Zenith alerts (live on Railway)
 - [x] **Phase 1.1: Telegram Admin (INSERTED)** - Admin Telegram bot: history, worker status, logs, manual poll/history triggers
-- [ ] **Phase 2: Telegram Ledger Assistant** - Admin via Telegram: verify via images/text/PDFs, balance, history with date ranges, security
+- [x] **Phase 2: Telegram Ledger Assistant** - Admin via Telegram: verify via images/text/PDFs, balance, history with date ranges, security
 - [ ] **Phase 3: Receipt Processing + OCR** - Media intake, Mistral OCR, confidence handling
 - [ ] **Phase 4: Matching Engine** - Deterministic reference/amount/date matching with atomic claim
 - [ ] **Phase 5: Retry & Reconciliation** - 60s retry, 5-min agent window, 48h background reconciliation
@@ -66,16 +66,16 @@ Plans:
   3. /verify handles image/PDF/free-form text via 2-step getFile 20MB SHA256 24h tmp dedup + pdf-parse local-first then OpenRouter vision/file only when necessary + deterministic SELECT + near-matches threshold + non-Zenith note (D-01..D-06, D-13)
   4. Search full-text via OpenRouter AI intent→parameterized GIN SQL, plus summary 24h/7d, export CSV sendDocument, duplicates GROUP BY HAVING all on existing PORT 8080 worker reusing pino ring 500 + rateLimit, no new runtime deps beyond pdf-parse (D-09, D-14)
 
-**Plans**: 1/3 plans executed (02-01 tracer, 02-02 verify, 02-03 add-ons)
+**Plans**: 3/3 plans executed (02-01 tracer, 02-02 verify, 02-03 add-ons) — Phase 2 complete
 
 Plans:
 
 - [x] 02-01-PLAN.md
-- [ ] 02-02-PLAN.md
-- [ ] 02-03-PLAN.md
+- [x] 02-02-PLAN.md
+- [x] 02-03-PLAN.md
 - [x] 02-01: Tracer — Telegram password /login 24h session replacing allowlist + webhook secret on PORT 8080 + balance + history Lagos DD/MM|ISO cap 50 description-first + GIN indexes (2-R1,2-R3,2-R4,2-R5)
-- [ ] 02-02: Verify via text + media 2-step getFile→/file 20MB + SHA256 24h tmp dedup + pdf-parse first then OpenRouter vision only when necessary → deterministic SELECT + near-matches (2-R2,2-R5)
-- [ ] 02-03: Helpful add-ons — summary 24h/7d, search AI intent→GIN SQL, export CSV via sendDocument, duplicates hunt (2-R6)
+- [x] 02-02: Verify via text + media 2-step getFile→/file 20MB + SHA256 24h tmp dedup + pdf-parse first then OpenRouter vision only when necessary → deterministic SELECT + near-matches (2-R2,2-R5)
+- [x] 02-03: Helpful add-ons — summary 24h/7d, search AI intent→GIN SQL, export CSV via sendDocument, duplicates hunt (2-R6)
 
 ### Phase 3: Receipt Processing + OCR
 
