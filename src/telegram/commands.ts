@@ -96,11 +96,49 @@ export async function handleVerifyStub(chatId: string, args: string[]): Promise<
   return { text: 'Send a photo/PDF with caption or type /verify 100k 2026-09-09 SAMPLE SENDER' };
 }
 
-export async function handleSearchStub(chatId: string, _args: string[]): Promise<{ text: string }> {
+export async function handleSearchStub(chatId: string, args: string[]): Promise<{ text: string; replyMarkup?: unknown }> {
+  const { isLoggedIn } = await import('./session');
+  if (!isLoggedIn(chatId)) return { text: '🔒 Please /login <password> first — session 24h or after restart' };
   if (isRateLimited(chatId, 'search', 10, 60_000)) {
-    return { text: '⏳ Search cooling down — retry in ~60s' };
+    return { text: '⏳ Search cooling down — retry in ~30s' };
   }
-  return { text: '🔍 Search coming in 02-03 — try /history with dates for now' };
+  const q = (args ?? []).join(' ').trim();
+  if (!q) return { text: 'Usage: /search <query> e.g. /search last week large transfers or /search SAMPLE SENDER 100k September' };
+  // pagination callback: last arg numeric and first arg encoded
+  // parseCommandText already split; for callback_data we have encoded query + offset
+  // detect callback form: args length >=1 where last is numeric offset and first token contains % encoding or no spaces
+  // We handle via handleSearch pagination param below
+  let queryText = q;
+  let offset = 0;
+  if (args.length >= 2) {
+    const last = args[args.length - 1];
+    if (/^\d+$/.test(last)) {
+      // check if first token is encoded search query
+      const possibleOffset = Number(last);
+      // If args came from callback_data "/search <encoded> <offset>", args[0] is encoded query
+      // For normal text search like "SAMPLE SENDER 100k 10" would also look like numeric last, but we treat it as query text instead of pagination
+      // Only treat as pagination when args length === 2 and first arg decodes without spaces? Safer: if we detect encode
+      // We'll differentiate by checking callback context: if encoded contains % or is single token query
+      // Use heuristic: if original args length === 2 and decode yields no error, treat as pagination
+      if (args.length === 2) {
+        try {
+          const decoded = decodeURIComponent(args[0]);
+          queryText = decoded;
+          offset = possibleOffset;
+        } catch {
+          // not encoded, treat as normal query
+        }
+      }
+    }
+  }
+  try {
+    const { handleSearch } = await import('./search');
+    const reply = await handleSearch(queryText, { offset });
+    return reply;
+  } catch (e) {
+    logger.warn({ err: e, chatId }, 'handleSearch failed');
+    return { text: '⚠️ Search failed — try again' };
+  }
 }
 
 // --- help with professional UI and inline keyboard ---
