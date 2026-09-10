@@ -131,9 +131,9 @@ Plans:
 **Success Criteria**:
   1. Every Telegram interaction is intuitive, professional, and requires minimal admin effort
   2. Display is clean, consistent, and guides the admin naturally
-**Plans**: 3 plans — 07-01 tracer (deleteMessage/Welcome/card-per-TX/Menu/friendly errors), 07-02 verify polish (FOUND/NOT_FOUND/Verifying edit/cleaned sender/near-matches), 07-03 NL history + slash-less + pagination
+**Plans**: 3/3 plans executed (07-01 tracer, 07-02 verify polish, 07-03 NL history + slash-less + pagination) — Phase 7 complete
 
 Plans:
-- [ ] 07-01-PLAN.md — Tracer: deleteMessage for /login, card-per-TX history 10/page, Welcome card, friendly errors, Menu Button on PORT 8080
-- [ ] 07-02-PLAN.md — Verify polish: rich FOUND/NOT_FOUND cards, Verifying… then edit, cleaned sender, near-matches threshold
-- [ ] 07-03-PLAN.md — NL history via gemma + slash-less search/history + inline pagination 10/page
+- [x] 07-01-PLAN.md — Tracer: deleteMessage for /login, card-per-TX history 10/page, Welcome card, friendly errors, Menu Button on PORT 8080
+- [x] 07-02-PLAN.md — Verify polish: rich FOUND/NOT_FOUND cards, Verifying… then edit, cleaned sender, near-matches threshold
+- [x] 07-03-PLAN.md — NL history via gemma + slash-less search/history + inline pagination 10/page
