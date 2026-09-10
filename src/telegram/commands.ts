@@ -721,6 +721,35 @@ export async function handleTelegramUpdate(update: unknown): Promise<{ text: str
     }
 
     const text = u?.message?.text?.trim() ?? '';
+    // Slash-less D-16: bare "search ..." and "history ..." when logged in reuse same handlers
+    if (text && !text.startsWith('/')) {
+      const slashlessChatId = String((u.message!.chat?.id ?? u.message!.from?.id ?? '') as string | number);
+      if (slashlessChatId) {
+        try {
+          const { isLoggedIn } = await import('./session');
+          if (isLoggedIn(slashlessChatId)) {
+            if (/^search\s+/i.test(text)) {
+              const queryText = text.slice(6).trim();
+              if (!queryText) return { text: 'Usage: /search <query> e.g. /search last week large transfers or /search SAMPLE SENDER 100k September' };
+              return handleSearchStub(slashlessChatId, [queryText]);
+            }
+            if (/^history\s+/i.test(text)) {
+              const rest = text.slice(7).trim();
+              if (!rest) return { text: 'Usage: /history [from to] — Range Lagos DD/MM/YYYY or YYYY-MM-DD or \'last week\'' };
+              const args2 = rest.split(/\s+/).filter(Boolean);
+              const { handleHistoryWithRange } = await import('./history');
+              return handleHistoryWithRange(args2);
+            }
+            if (/^search$/i.test(text)) {
+              return { text: 'Usage: /search <query> e.g. /search last week large transfers or /search SAMPLE SENDER 100k September' };
+            }
+            if (/^history$/i.test(text)) {
+              return { text: 'Usage: /history [from to] — Range Lagos DD/MM/YYYY or YYYY-MM-DD or \'last week\'' };
+            }
+          }
+        } catch {}
+      }
+    }
     if (!text.startsWith('/')) return null;
     const { cmd, args } = parseCommandText(text);
     if (!cmd) return null;
