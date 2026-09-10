@@ -193,7 +193,7 @@ None - plan executed exactly as written. All per-field extractors, four families
 
 ## Issues Encountered
 
-- Gitless workspace (no .git at path/to/repository) — per 01-01-SUMMARY, sequential executor creates files without git commits; metadata commit skipped. Verified via npm test 110/110 green and npx tsc --noEmit clean.
+- Gitless workspace (no .git at C:/Users/user/Documents/Example Project) — per 01-01-SUMMARY, sequential executor creates files without git commits; metadata commit skipped. Verified via npm test 110/110 green and npx tsc --noEmit clean.
 - Host Node 24.14.0 vs Railway node:20-slim engines >=20 already set in 01-01 — no change needed.
 - Existing watcher/poll unit tests (watch.test.ts, poll.test.ts) from 01-03 pre-existing passed unchanged (110 total includes them).
 
