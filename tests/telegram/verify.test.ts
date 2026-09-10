@@ -3,6 +3,12 @@ import { _setPoolForTests } from '../../src/db/pool';
 
 const originalFetch = global.fetch;
 
+function extractText(reply: unknown): string {
+  if (typeof reply === 'string') return reply;
+  if (reply && typeof reply === 'object' && 'text' in (reply as Record<string, unknown>)) return String((reply as { text: string }).text);
+  return String(reply ?? '');
+}
+
 function mockPoolForVerify(opts: {
   exactRows?: Array<Record<string, string | null>>;
   nearRows?: Array<Record<string, string | null>>;
@@ -13,6 +19,10 @@ function mockPoolForVerify(opts: {
       if (opts.capture) {
         opts.capture.sqls.push(text);
         opts.capture.params.push(params ?? []);
+      }
+      // new nearMatch query uses BETWEEN interval '1 day' LIMIT 20 without similarity
+      if (text.includes("BETWEEN") && text.includes("interval '1 day'")) {
+        return { rows: opts.nearRows ?? [], rowCount: opts.nearRows?.length ?? 0, command: 'SELECT', oid: 0, fields: [] };
       }
       if (text.includes('similarity(sender_name')) {
         return { rows: opts.nearRows ?? [], rowCount: opts.nearRows?.length ?? 0, command: 'SELECT', oid: 0, fields: [] };
@@ -106,7 +116,7 @@ describe('telegram verify — parseFreeForm, dedup, pdf/vision gates, determinis
     const { handleVerify, _getVerifyCacheForTests } = await import('../../src/telegram/verify');
     // first call with caption that parses locally (so no vision) — will succeed and cache
     const first = await handleVerify({ chatId: '123', fileId: 'file123', mime: 'image/jpeg', caption: '100k 2026-09-10 SAMPLE SENDER' });
-    expect(first).toContain('FOUND');
+    expect(extractText(first)).toContain('VERIFIED');
     expect(fetchCalls).toBe(2); // getFile + download
     const cacheSizeAfterFirst = _getVerifyCacheForTests().size;
     expect(cacheSizeAfterFirst).toBeGreaterThan(0);
@@ -145,7 +155,7 @@ describe('telegram verify — parseFreeForm, dedup, pdf/vision gates, determinis
     __setPdfTextOverride('Amount 100,000 NGN Date 2026-09-10 Sender EXAMPLE MERCHANT extra padding to exceed 40 chars');
     const reply = await handleVerify({ chatId: '123', fileId: 'pdfFile123', mime: 'application/pdf', isPdf: true });
     __setPdfTextOverride(null);
-    expect(reply).toContain('FOUND');
+    expect(extractText(reply)).toContain('VERIFIED');
     expect(openRouterCalled).toBe(false);
   });
 
@@ -181,7 +191,7 @@ describe('telegram verify — parseFreeForm, dedup, pdf/vision gates, determinis
     const reply = await handleVerify({ chatId: '123', fileId: 'pdfFile456-unique-' + Date.now(), mime: 'application/pdf', isPdf: true });
     __setPdfTextOverride(null);
     expect(openRouterPdfCalled).toBe(true);
-    expect(reply).toContain('FOUND');
+    expect(extractText(reply)).toContain('VERIFIED');
   });
 
   it('vision gate: caption parses -> no openRouterVision', async () => {
@@ -207,7 +217,7 @@ describe('telegram verify — parseFreeForm, dedup, pdf/vision gates, determinis
     const { handleVerify } = await import('../../src/telegram/verify');
     const reply = await handleVerify({ chatId: '123', fileId: 'fileCaptionOk', mime: 'image/jpeg', caption: '100k 2026-09-10 SAMPLE SENDER' });
     expect(visionCalled).toBe(false);
-    expect(reply).toContain('FOUND');
+    expect(extractText(reply)).toContain('VERIFIED');
   });
 
   it('vision gate: caption fails -> vision called once', async () => {
@@ -234,7 +244,7 @@ describe('telegram verify — parseFreeForm, dedup, pdf/vision gates, determinis
     const { handleVerify } = await import('../../src/telegram/verify');
     const reply = await handleVerify({ chatId: '123', fileId: 'fileNoCaption', mime: 'image/jpeg', caption: 'unparsable caption no amount' });
     expect(visionCalled).toBe(1);
-    expect(reply).toContain('FOUND');
+    expect(extractText(reply)).toContain('VERIFIED');
   });
 
   it('deterministicMatch FOUND (1 row) and MULTIPLE (>1) and NOT_FOUND_NEAR', async () => {
@@ -243,7 +253,7 @@ describe('telegram verify — parseFreeForm, dedup, pdf/vision gates, determinis
     // FOUND case: local free-form text
     _setPoolForTests(mockPoolForVerify({ exactRows: [{ amount: '100000', currency: 'NGN', transaction_date: '2026-09-10', sender_name: 'EXAMPLE MERCHANT', description: 'NIP/FCMB/EXAMPLE MERCHANT/Transfer', available_balance: '319599.78', branch: null }], nearRows: [] }));
     let reply = await handleVerify({ chatId: '123', freeFormText: '100k 2026-09-10 EXAMPLE MERCHANT' });
-    expect(reply).toContain('FOUND');
+    expect(extractText(reply)).toContain('VERIFIED');
 
     // MULTIPLE
     _setPoolForTests(mockPoolForVerify({ exactRows: [
@@ -260,8 +270,8 @@ describe('telegram verify — parseFreeForm, dedup, pdf/vision gates, determinis
       { amount: '100000', currency: 'NGN', transaction_date: '2026-09-11', sender_name: 'SAMPLE SENDER', description: 'CIP CR/SAMPLE SENDER/Transfer', available_balance: '200', branch: null, sim: '0.5' },
     ] }));
     reply = await handleVerify({ chatId: '123', freeFormText: '100k 2026-09-10 SAMPLE SENDER-not-exact' });
-    expect(reply).toContain('Not found');
-    expect(reply).toContain('Near matches');
+    expect(extractText(reply)).toContain('Not found');
+    expect(extractText(reply)).toContain('Near matches');
   });
 
   it('non-Zenith note detection prepends note', async () => {
@@ -282,7 +292,7 @@ describe('telegram verify — parseFreeForm, dedup, pdf/vision gates, determinis
     process.env.OPENROUTER_API_KEY = 'k';
     // caption unparsable to force vision which returns 50k SAMPLE SENDER
     const reply = await handleVerify({ chatId: '123', fileId: 'gtbFile', mime: 'image/jpeg', caption: 'GTB transfer receipt' });
-    expect(reply).toContain('Non-Zenith');
+    expect(extractText(reply)).toContain('Non-Zenith');
   });
 
   it('openRouter missing key degrades to text-only (no vision call)', async () => {
@@ -299,7 +309,7 @@ describe('telegram verify — parseFreeForm, dedup, pdf/vision gates, determinis
     _setPoolForTests(mockPoolForVerify({ exactRows: [{ amount: '100000', currency: 'NGN', transaction_date: '2026-09-10', sender_name: 'SAMPLE SENDER', description: 'desc', available_balance: '100', branch: null }], nearRows: [] }));
     const { handleVerify } = await import('../../src/telegram/verify');
     const reply = await handleVerify({ chatId: '123', fileId: 'nokeyFile', mime: 'image/jpeg', caption: '100k 2026-09-10 SAMPLE SENDER' });
-    expect(reply).toContain('FOUND');
+    expect(extractText(reply)).toContain('VERIFIED');
   });
 
   it('worker integration: handleTelegramUpdate routes photo/document via session gate and rate limit', async () => {
@@ -327,7 +337,7 @@ describe('telegram verify — parseFreeForm, dedup, pdf/vision gates, determinis
     _setPoolForTests(mockPoolForVerify({ exactRows: [{ amount: '100000', currency: 'NGN', transaction_date: '2026-09-10', sender_name: 'SAMPLE SENDER', description: 'desc', available_balance: '100', branch: null }] }));
     update = { message: { chat: { id: Number(chatId) }, photo: [{ file_id: 'fid_large', file_size: 9000 }], caption: '100k 2026-09-10 SAMPLE SENDER' } };
     res = await handleTelegramUpdate(update);
-    expect(String(res)).toContain('FOUND');
+    expect(extractText(res)).toContain('VERIFIED');
 
     // rate limit: 5/60s — exhaust
     _resetRateLimitForTests();

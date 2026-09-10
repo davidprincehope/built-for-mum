@@ -212,9 +212,9 @@ export async function editTelegramMessage(
   messageId: number,
   text: string,
   opts?: { replyMarkup?: unknown },
-): Promise<void> {
+): Promise<boolean> {
   const token = getBotToken();
-  if (!token || !messageId) return;
+  if (!token || !messageId) return false;
   try {
     const sliced = escapeHtml(text).slice(0, 4000);
     const body: Record<string, unknown> = {
@@ -234,20 +234,27 @@ export async function editTelegramMessage(
     if (!res.ok) {
       const j = (await res.json().catch(() => ({}))) as { description?: string };
       const desc = String(j.description ?? '');
-      if (/message is not modified/i.test(desc)) return;
+      if (/message is not modified/i.test(desc)) return true;
       if (/can't parse entities/i.test(desc)) {
         // retry without parse_mode stripping tags
         const plain = text.slice(0, 4000).replace(/<[^>]+>/g, '');
-        await fetch(url, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ chat_id: String(chatId), message_id: messageId, text: plain }),
-        }).catch(() => {});
-        return;
+        try {
+          await fetch(url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ chat_id: String(chatId), message_id: messageId, text: plain }),
+          });
+        } catch {}
+        return true;
       }
+      if (/message to edit not found/i.test(desc) || /message not found/i.test(desc) || /message can't be edited/i.test(desc) || /message to delete not found/i.test(desc)) {
+        return false;
+      }
+      return false;
     }
+    return true;
   } catch {
-    // never throw — caller falls back to sendMessage
+    return false;
   }
 }
 

@@ -370,6 +370,20 @@ function createHttpServer(): import('http').Server {
         const { cmd } = parseCommandText(rawText);
         logger.info({ chatId, cmd: cmd || '(non-command)' }, 'telegram webhook dispatch');
 
+        // Verifying… placeholder for media verify (any image = verify per D-07) — send instantly then edit per D-12
+        let placeholderId: number | null = null;
+        const mediaBody = body as { message?: { photo?: unknown[]; document?: unknown } };
+        const hasMedia = !!(mediaBody?.message?.photo || mediaBody?.message?.document);
+        if (hasMedia) {
+          try {
+            const { isLoggedIn } = await import('./telegram/session');
+            if (isLoggedIn(chatId)) {
+              const { sendTelegramMessageWithId } = await import('./telegram/sendMessage');
+              placeholderId = await sendTelegramMessageWithId(chatId, '⏳ <b>Verifying</b>… <i>extracting…</i>', { parseMode: 'HTML' });
+            }
+          } catch {}
+        }
+
         let reply: unknown = null;
         try {
           // Login delete wiring: intercept /login to pass message_id for deleteMessage
@@ -393,13 +407,24 @@ function createHttpServer(): import('http').Server {
         }
 
         if (reply) {
-          // Handle both string and {text, replyMarkup} from polished commands.ts
           try {
-            if (typeof reply === 'string') {
-              await sendTelegramMessage(chatId, reply);
-            } else if (reply && typeof reply === 'object' && 'text' in (reply as Record<string, unknown>)) {
-              const r = reply as { text: string; replyMarkup?: unknown };
-              await sendTelegramMessage(chatId, r.text, { replyMarkup: r.replyMarkup });
+            const isString = typeof reply === 'string';
+            const replyText = isString ? (reply as string) : (reply as { text: string }).text;
+            const replyMarkup = isString ? undefined : (reply as { replyMarkup?: unknown }).replyMarkup;
+            if (placeholderId) {
+              const { editTelegramMessage } = await import('./telegram/sendMessage');
+              const effectiveMarkup = replyMarkup ?? (replyText.includes('VERIFIED') ? { inline_keyboard: [[{ text: '📜 View History', callback_data: '/history 5' }]] } : undefined);
+              const edited = await editTelegramMessage(chatId, placeholderId, replyText, { replyMarkup: effectiveMarkup } as { replyMarkup?: unknown });
+              if (!edited) {
+                await sendTelegramMessage(chatId, replyText, { replyMarkup: replyMarkup as unknown } as { replyMarkup?: unknown });
+              }
+            } else {
+              if (isString) {
+                await sendTelegramMessage(chatId, reply as string);
+              } else if (reply && typeof reply === 'object' && 'text' in (reply as Record<string, unknown>)) {
+                const r = reply as { text: string; replyMarkup?: unknown };
+                await sendTelegramMessage(chatId, r.text, { replyMarkup: r.replyMarkup });
+              }
             }
           } catch (err) {
             logger.warn({ err, chatId }, 'sendTelegramMessage failed after webhook');
