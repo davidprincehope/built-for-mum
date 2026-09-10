@@ -2,6 +2,7 @@ import { parse, isValid, parseISO } from 'date-fns';
 import { getPool } from '../db/pool';
 import { escapeHtml } from './sendMessage';
 import { extractSender } from '../zenith/sender';
+import { logger } from '../observability/logger';
 
 async function withTimeout<T>(p: Promise<T>, ms = 5000, fallback: T): Promise<T> {
   let timer: NodeJS.Timeout | undefined;
@@ -163,18 +164,110 @@ export async function handleHistoryWithRange(args: string[], opts?: { limit?: nu
   }
 
   if (!from || !to) {
+    // Fast path: explicit 2-arg dates bypass AI (per D-08 / T-07-15)
     if (args.length === 2) {
       const parsed = parseLagosDateRange(args);
-      if ('error' in parsed) {
-        return { text: escapeHtml(parsed.error) };
+      if (!('error' in parsed)) {
+        from = (parsed as { from: string; to: string }).from;
+        to = (parsed as { from: string; to: string }).to;
+      } else {
+        // NL fallback only when explicit parse failed and text contains letters
+        const joined = args.join(' ').trim();
+        const hasWords = /[A-Za-z]/.test(joined);
+        if (hasWords) {
+          let aiFrom: string | null = null;
+          let aiTo: string | null = null;
+          try {
+            const { openRouterSearchIntent } = await import('./search');
+            const intent = await openRouterSearchIntent(joined);
+            if (intent?.fromDate && intent?.toDate) {
+              const vFrom = intent.fromDate;
+              const vTo = intent.toDate;
+              if (/^\d{4}-\d{2}-\d{2}$/.test(vFrom) && /^\d{4}-\d{2}-\d{2}$/.test(vTo) && vFrom <= vTo) {
+                aiFrom = vFrom; aiTo = vTo;
+              } else {
+                logger.warn({ vFrom, vTo }, 'history NL AI dates invalid — fallback to local');
+              }
+            } else if (intent == null) {
+              logger.warn('history NL AI returned null — fallback to local');
+            }
+          } catch (e) {
+            const msg = (e as Error)?.message ?? '';
+            if (/OPENROUTER_429|429/.test(msg)) logger.warn({ err: e }, 'history NL AI 429 — fallback to local');
+            else logger.warn({ err: e }, 'history NL AI failed — fallback to local');
+          }
+          if (aiFrom && aiTo) {
+            from = aiFrom; to = aiTo;
+          } else {
+            // Local heuristic fallback (Rule 2 fallback per T-07-12)
+            try {
+              const { localKeywordIntent } = await import('./search');
+              const local = localKeywordIntent(joined);
+              if (local.fromDate && local.toDate && /^\d{4}-\d{2}-\d{2}$/.test(local.fromDate) && /^\d{4}-\d{2}-\d{2}$/.test(local.toDate) && local.fromDate <= local.toDate) {
+                from = local.fromDate; to = local.toDate;
+              } else {
+                // manual month/last-week already covered by localKeywordIntent, but keep error hint
+                return { text: 'Invalid date — try DD/MM/YYYY or \'last week\'' };
+              }
+            } catch {
+              return { text: 'Invalid date — try DD/MM/YYYY or \'last week\'' };
+            }
+          }
+        } else {
+          return { text: escapeHtml((parsed as { error: string }).error) };
+        }
       }
-      from = (parsed as { from: string }).from;
-      to = (parsed as { from: string; to: string }).to;
+    } else if (args.length === 1) {
+      // Single natural-language token like "September" or "last week" with 1 arg?
+      // Treat as NL if contains letters
+      const joined = args.join(' ').trim();
+      if (/[A-Za-z]/.test(joined)) {
+        let aiFrom: string | null = null;
+        let aiTo: string | null = null;
+        try {
+          const { openRouterSearchIntent } = await import('./search');
+          const intent = await openRouterSearchIntent(joined);
+          if (intent?.fromDate && intent?.toDate && /^\d{4}-\d{2}-\d{2}$/.test(intent.fromDate) && /^\d{4}-\d{2}-\d{2}$/.test(intent.toDate) && intent.fromDate <= intent.toDate) {
+            aiFrom = intent.fromDate; aiTo = intent.toDate;
+          }
+        } catch {}
+        if (aiFrom && aiTo) { from = aiFrom; to = aiTo; }
+        else {
+          try {
+            const { localKeywordIntent } = await import('./search');
+            const local = localKeywordIntent(joined);
+            if (local.fromDate && local.toDate) { from = local.fromDate; to = local.toDate; }
+            else return { text: 'Invalid date — try DD/MM/YYYY or \'last week\'' };
+          } catch { return { text: 'Invalid date — try DD/MM/YYYY or \'last week\'' }; }
+        }
+      } else {
+        const parsed = parseLagosDateRange(args.slice(0, 2));
+        if ('error' in parsed) {
+          const err = (parsed as { error: string }).error;
+          if (err !== 'no-args') return { text: escapeHtml(err) };
+        }
+        if (!from) return { text: 'Invalid date — use DD/MM/YYYY or YYYY-MM-DD Africa/Lagos' };
+      }
     } else if (args.length !== 4) {
       const parsed = parseLagosDateRange(args.slice(0, 2));
       if ('error' in parsed) {
         const err = (parsed as { error: string }).error;
         if (err !== 'no-args') return { text: escapeHtml(err) };
+      }
+      // If args >2 and not 4-arg pagination, try NL on full joined when letters present
+      const joined = args.join(' ').trim();
+      if (!from && /[A-Za-z]/.test(joined)) {
+        try {
+          const { openRouterSearchIntent } = await import('./search');
+          const intent = await openRouterSearchIntent(joined);
+          if (intent?.fromDate && intent?.toDate && /^\d{4}-\d{2}-\d{2}$/.test(intent.fromDate) && /^\d{4}-\d{2}-\d{2}$/.test(intent.toDate) && intent.fromDate <= intent.toDate) {
+            from = intent.fromDate; to = intent.toDate;
+          } else {
+            const { localKeywordIntent } = await import('./search');
+            const local = localKeywordIntent(joined);
+            if (local.fromDate && local.toDate) { from = local.fromDate; to = local.toDate; }
+          }
+        } catch {}
       }
       if (!from) return { text: 'Invalid date — use DD/MM/YYYY or YYYY-MM-DD Africa/Lagos' };
     }
