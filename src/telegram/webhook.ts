@@ -16,8 +16,11 @@ export function verifySecretToken(req: import('http').IncomingMessage): boolean 
 }
 
 export function extractChatId(body: unknown): string | null {
-  const b = body as { message?: { chat?: { id?: number | string }; from?: { id?: number | string } } } | null | undefined;
-  const id = b?.message?.chat?.id ?? b?.message?.from?.id ?? null;
+  const b = body as {
+    message?: { chat?: { id?: number | string }; from?: { id?: number | string } };
+    callback_query?: { message?: { chat?: { id?: number | string } }; from?: { id?: number | string } };
+  } | null | undefined;
+  const id = b?.message?.chat?.id ?? b?.message?.from?.id ?? b?.callback_query?.message?.chat?.id ?? b?.callback_query?.from?.id ?? null;
   if (id === null || id === undefined) return null;
   return String(id);
 }

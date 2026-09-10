@@ -290,8 +290,10 @@ describe('pipeline integration — T-2.1 .. T-2.6 / T-3.2 / T-3.4 / T-3.5', () =
       html: htmlMissingRef,
     });
     const res = await processEmail('pipe-missing-ref', { gmail: gmailMock as never });
-    expect(res).toBe('validation_failed');
-    expect(transactions.has('pipe-missing-ref')).toBe(false);
+    // Live 2026-09-10 NIP with blank reference code is now allowed (optionalKv) — should be inserted with empty ref
+    expect(res).toBe('inserted');
+    expect(transactions.has('pipe-missing-ref')).toBe(true);
+    expect(transactions.get('pipe-missing-ref')!.transaction_reference).toBe('');
     _setPoolForTests(null);
   });
 

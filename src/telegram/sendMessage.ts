@@ -28,7 +28,7 @@ function getBotToken(): string {
 export async function sendTelegramMessage(
   chatId: string | number,
   text: string,
-  opts?: { parseMode?: 'HTML' | undefined },
+  opts?: { parseMode?: 'HTML' | undefined; replyMarkup?: unknown },
 ): Promise<void> {
   const token = getBotToken();
   if (!token) {
@@ -58,6 +58,7 @@ export async function sendTelegramMessage(
       disable_web_page_preview: true,
     };
     if (useParseMode) body.parse_mode = useParseMode;
+    if (opts?.replyMarkup) body.reply_markup = opts.replyMarkup;
     try {
       const res = await fetch(url, {
         method: 'POST',

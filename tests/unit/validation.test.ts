@@ -91,9 +91,11 @@ describe('validation — FR-1.7 / T-1.10..T-1.13 / T-3.5', () => {
     expect(() => validateTransaction(direct)).toThrow();
   });
 
-  it('T-3.5 missing transaction_reference rejected with non-empty error, no row inserted path', () => {
+  it('T-3.5 empty transaction_reference now allowed (NIP with blank reference, live 2026-09-10)', () => {
     const direct = { ...validInput(), transaction_reference: '' };
-    expect(() => validateTransaction(direct)).toThrow(/transaction_reference|non-empty/i);
+    expect(() => validateTransaction(direct)).not.toThrow();
+    const v = validateTransaction(direct);
+    expect(v.transaction_reference).toBe('');
   });
 
   it('T-3.5 empty description still passes (description optional) but sender_name required', () => {

@@ -335,11 +335,12 @@ function createHttpServer(): import('http').Server {
         }
 
         // Parse command for logging; per-command poll/watch limits handled inside command handlers
-        const rawText: string = (body as { message?: { text?: string } })?.message?.text ?? '';
+        const bodyAny = body as { message?: { text?: string }; callback_query?: { data?: string } };
+        const rawText: string = bodyAny?.message?.text ?? bodyAny?.callback_query?.data ?? '';
         const { cmd } = parseCommandText(rawText);
         logger.info({ chatId, cmd: cmd || '(non-command)' }, 'telegram webhook dispatch');
 
-        let reply: string | null = null;
+        let reply: unknown = null;
         try {
           reply = await handleTelegramUpdate(body);
         } catch (err) {
@@ -354,13 +355,26 @@ function createHttpServer(): import('http').Server {
         }
 
         if (reply) {
-          // For poll/watch, reply is the immediate ack; follow-up is sent off-path inside handler
-          // For other commands, reply is the final answer
+          // Handle both string and {text, replyMarkup} from polished commands.ts
           try {
-            await sendTelegramMessage(chatId, reply);
+            if (typeof reply === 'string') {
+              await sendTelegramMessage(chatId, reply);
+            } else if (reply && typeof reply === 'object' && 'text' in (reply as Record<string, unknown>)) {
+              const r = reply as { text: string; replyMarkup?: unknown };
+              await sendTelegramMessage(chatId, r.text, { replyMarkup: r.replyMarkup });
+            }
           } catch (err) {
             logger.warn({ err, chatId }, 'sendTelegramMessage failed after webhook');
           }
+        }
+        // Answer callback_query to remove spinner (if present)
+        const cbId = (body as { callback_query?: { id?: string } })?.callback_query?.id;
+        if (cbId) {
+          try {
+            const token = process.env.TELEGRAM_BOT_TOKEN ?? process.env.TELEGRAM_BOT_TOKEN_ALT ?? '';
+            const t = token || (process.env.ALERT_WEBHOOK_URL?.match(/api\.telegram\.org\/bot([^\/\s]+)/)?.[1] ?? '');
+            if (t) await fetch(`https://api.telegram.org/bot${t}/answerCallbackQuery`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ callback_query_id: cbId }) }).catch(() => {});
+          } catch {}
         }
         return;
       } catch (err) {
