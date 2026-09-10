@@ -160,21 +160,21 @@ export function buildHelpReply(): { text: string; replyMarkup?: unknown } {
     '💳 <b>Ledger</b>',
     '  /balance  —  Available & current + last TX',
     '  /history <i>[from to]</i>  —  Range Lagos DD/MM/YYYY or YYYY-MM-DD capped 50',
-    '  /search <i>query</i>  —  Full-text AI search (upcoming)',
-    '  /verify <i>[text]</i> + image/PDF  —  Verify transaction (upcoming)',
+    '  /search <i>query</i>  —  Full-text AI search e.g. last week large transfers',
+    '  /verify <i>[text]</i> + image/PDF  —  Verify transaction',
     '  /suspicious <i>[n]</i>  —  Last <i>n</i> spoofs <code>(5)</code>',
     '',
     '📈 <b>Analytics</b>',
-    '  /summary  —  24h/7d counts & sums (upcoming)',
-    '  /export <i>[from to]</i>  —  CSV via document (upcoming)',
-    '  /duplicates  —  Hunt duplicates GROUP BY (upcoming)',
+    '  /summary  —  24h/7d counts & sums + last TX Africa/Lagos',
+    '  /export <i>[from to]</i>  —  CSV via document',
+    '  /duplicates  —  Hunt duplicates GROUP BY amount, date HAVING COUNT>1',
     '',
     '⚡ <b>Ops</b>',
     '  /poll    —  Trigger Gmail poll <i>(30s cooldown)</i>',
     '  /watch   —  Re-register Gmail watch <i>(60s cooldown)</i>',
     '  /logout  —  End 24h session',
     '',
-    '💡 <i>Examples:</i> <code>/login secret</code>  <code>/balance</code>  <code>/history 01/09/2026 10/09/2026</code>  <code>/search SAMPLE SENDER 100k</code>',
+    '💡 <i>Examples:</i> <code>/login secret</code>  <code>/balance</code>  <code>/history 01/09/2026 10/09/2026</code>  <code>/search SAMPLE SENDER 100k</code>  <code>/export 2026-09-01 2026-09-10</code>',
     '',
     '🔗 <a href="https://example.com/health">Health endpoint</a> • <code>Africa/Lagos</code>',
   ].join('\n');
@@ -187,6 +187,14 @@ export function buildHelpReply(): { text: string; replyMarkup?: unknown } {
       ],
       [
         { text: '📜 History', callback_data: '/history' },
+        { text: '🔍 Search', callback_data: '/search' },
+      ],
+      [
+        { text: '📊 Summary', callback_data: '/summary' },
+        { text: '📄 Export', callback_data: '/export' },
+      ],
+      [
+        { text: '🔎 Duplicates', callback_data: '/duplicates' },
         { text: '📋 Logs', callback_data: '/logs' },
       ],
       [
@@ -527,6 +535,43 @@ export async function handleWatchTrigger(chatId: string): Promise<{ text: string
 
 type Handler = (chatId: string, args: string[]) => Promise<{ text: string; replyMarkup?: unknown } | string> | string;
 
+export async function handleExportWrapper(chatId: string, args: string[]): Promise<{ text: string; replyMarkup?: unknown } | string> {
+  const { isLoggedIn } = await import('./session');
+  if (!isLoggedIn(chatId)) return '🔒 Please /login <password> first — session 24h or after restart';
+  if (isRateLimited(chatId, 'export', 5, 60_000)) return '⏳ Export cooling down — retry in ~30s';
+  try {
+    const { handleExport } = await import('./export');
+    return await handleExport(args, chatId);
+  } catch (e) {
+    logger.warn({ err: e, chatId }, 'handleExport failed');
+    return '⚠️ Export failed — try again';
+  }
+}
+
+export async function handleDuplicatesWrapper(chatId: string, _args: string[]): Promise<{ text: string; replyMarkup?: unknown } | string> {
+  const { isLoggedIn } = await import('./session');
+  if (!isLoggedIn(chatId)) return '🔒 Please /login <password> first — session 24h or after restart';
+  try {
+    const { handleDuplicates } = await import('./export');
+    return await handleDuplicates();
+  } catch (e) {
+    logger.warn({ err: e, chatId }, 'handleDuplicates failed');
+    return '⚠️ Duplicates failed — try again';
+  }
+}
+
+export async function handleSummaryWrapper(chatId: string, _args: string[]): Promise<{ text: string; replyMarkup?: unknown } | string> {
+  const { isLoggedIn } = await import('./session');
+  if (!isLoggedIn(chatId)) return '🔒 Please /login <password> first — session 24h or after restart';
+  try {
+    const { handleSummary } = await import('./export');
+    return await handleSummary();
+  } catch (e) {
+    logger.warn({ err: e, chatId }, 'handleSummary failed');
+    return '⚠️ Summary failed — try again';
+  }
+}
+
 const handlers: Record<string, Handler> = {
   help: async () => buildHelpReply(),
   status: async () => buildStatusReply(),
@@ -552,6 +597,9 @@ const handlers: Record<string, Handler> = {
   },
   verify: async (chatId, args) => handleVerifyStub(chatId, args),
   search: async (chatId, args) => handleSearchStub(chatId, args),
+  summary: async (chatId, args) => handleSummaryWrapper(chatId, args),
+  export: async (chatId, args) => handleExportWrapper(chatId, args),
+  duplicates: async (chatId, args) => handleDuplicatesWrapper(chatId, args),
   suspicious: async (chatId, args) => handleSuspicious(args[0]),
   logs: async (chatId, args) => handleLogs(args[0] ? Number(args[0]) : undefined, args[1]),
   poll: async (chatId) => handlePollTrigger(chatId),
