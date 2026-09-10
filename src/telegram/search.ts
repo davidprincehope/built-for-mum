@@ -406,8 +406,8 @@ export async function handleSearch(
   }
   if (text.length > 4000) text = text.slice(0, 4000);
 
-  // pagination inline keyboard: encode query truncated 60 chars
-  const truncatedQuery = q.slice(0, 60);
+  // pagination ≤64B per RESEARCH Pitfall 1: truncate to 30 before encode so %20 bloat stays under limit
+  const truncatedQuery = q.slice(0, 30);
   const encoded = encodeURIComponent(truncatedQuery);
   const buttons: Array<Array<{ text: string; callback_data: string }>> = [];
   const navRow: Array<{ text: string; callback_data: string }> = [];
