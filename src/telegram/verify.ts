@@ -181,36 +181,91 @@ export async function deterministicMatch(params: { amount: number; date: string;
   return { status: 'NOT_FOUND' };
 }
 
+export function senderSimilarity(a: string, b: string): number {
+  const sa = (a ?? '').toLowerCase().trim();
+  const sb = (b ?? '').toLowerCase().trim();
+  if (!sa || !sb) return 0;
+  if (sa === sb) return 1;
+  if (sa.includes(sb) || sb.includes(sa)) return 0.6;
+  const getBigrams = (s: string): Set<string> => {
+    const padded = ` ${s} `;
+    const set = new Set<string>();
+    for (let i = 0; i < padded.length - 1; i++) set.add(padded.slice(i, i + 2));
+    return set;
+  };
+  const setA = getBigrams(sa);
+  const setB = getBigrams(sb);
+  let inter = 0;
+  for (const g of setA) if (setB.has(g)) inter++;
+  const union = setA.size + setB.size - inter;
+  return union === 0 ? 0 : inter / union;
+}
+
 export async function nearMatch(params: { amount: number; date: string; sender?: string }): Promise<TxRow[]> {
   const pool = getPool();
   const amountStr = String(params.amount);
-  const sender = params.sender ?? '';
+  const sender = (params.sender ?? '').trim();
   try {
-    const near = await pool.query<TxRow & { sim: string }>(
-      `SELECT amount::text,currency,transaction_date::text,sender_name,description, similarity(sender_name,$2) as sim, available_balance::text,branch FROM transactions WHERE amount=$1::numeric AND transaction_date BETWEEN ($3::date - INTERVAL '1 day') AND ($3::date + INTERVAL '1 day') AND similarity(sender_name,$2) > 0.3 ORDER BY sim DESC LIMIT 3`,
-      [amountStr, sender, params.date],
+    const candidates = await pool.query<TxRow>(
+      `SELECT amount::text,currency,transaction_date::text,sender_name,description,available_balance::text,branch FROM transactions WHERE amount = $1::numeric AND transaction_date::date BETWEEN ($2::date - interval '1 day') AND ($2::date + interval '1 day') LIMIT 20`,
+      [amountStr, params.date],
     );
-    return near.rows as TxRow[];
+    const rows = candidates.rows as TxRow[];
+    if (!sender) {
+      return rows.slice(0, 3);
+    }
+    const scored = rows
+      .map((r) => {
+        const cleaned = extractSender(r.description ?? '').senderName || r.sender_name || '';
+        const simDesc = senderSimilarity(cleaned, sender);
+        const simName = senderSimilarity(r.sender_name ?? '', sender);
+        const sim = Math.max(simDesc, simName);
+        return { row: r, sim };
+      })
+      .filter((x) => x.sim > 0.3)
+      .sort((a, b) => b.sim - a.sim)
+      .slice(0, 3)
+      .map((x) => x.row);
+    return scored;
   } catch (e) {
     logger.warn({ err: e }, 'nearMatch query failed');
     return [];
   }
 }
 
-function formatFound(row: TxRow): string {
+export function renderFoundCard(row: TxRow): { text: string; replyMarkup: unknown } {
   const amt = escapeHtml(row.amount ?? '');
   const curr = escapeHtml(row.currency ?? 'NGN');
-  const sender = escapeHtml(row.sender_name ?? '');
-  const date = escapeHtml(row.transaction_date ?? '');
+  const cleanedRaw = extractSender(row.description ?? '').senderName || row.sender_name || '—';
+  const cleaned = escapeHtml(cleanedRaw);
+  const dateRaw = (row.transaction_date ?? '').slice(0, 10);
+  const date = escapeHtml(dateRaw);
+  const desc = row.description ?? '';
+  let via: string;
+  if (desc.includes('NIP')) via = 'NIP';
+  else if (desc.includes('KUDA')) via = 'KUDA';
+  else via = 'Zenith';
+  const viaEsc = escapeHtml(via);
   const avail = row.available_balance ? escapeHtml(row.available_balance) : '—';
-  const descSnippet = row.description ? escapeHtml(row.description.slice(0, 120)) : '';
-  let txt = `✅ FOUND — ${amt} ${curr} from ${sender} on ${date} • Avail ${avail}`;
-  if (descSnippet) txt += ` • ${descSnippet}`;
-  return txt;
+  const text = `✅ <b>VERIFIED</b> — <code>${amt} ${curr}</code> from <code>${cleaned}</code> • <code>${date}</code> • via <b>${viaEsc}</b> • Available: <code>${avail}</code>`;
+  const replyMarkup = { inline_keyboard: [[{ text: '📜 View History', callback_data: '/history 5' }]] };
+  return { text, replyMarkup };
+}
+
+export function renderNotFoundBase(): string {
+  return `❌ <b>Not found</b> — no matching Zenith transaction yet\n<i>Tip: check amount/sender/date or try /history 2026-09-01 2026-09-10</i>`;
+}
+
+function formatFound(row: TxRow): string {
+  return renderFoundCard(row).text;
 }
 
 function formatMultiple(rows: TxRow[]): string {
-  const lines = rows.slice(0, 5).map((r, i) => `${i + 1}. ${escapeHtml(r.amount)} ${escapeHtml(r.currency)} from ${escapeHtml(r.sender_name)} on ${escapeHtml(r.transaction_date)} • ${escapeHtml((r.description ?? '').slice(0, 60))}`);
+  const lines = rows.slice(0, 5).map((r, i) => {
+    const cleanedRaw = extractSender(r.description ?? '').senderName || r.sender_name || '—';
+    const cleaned = escapeHtml(cleanedRaw);
+    return `${i + 1}. ${escapeHtml(r.amount)} ${escapeHtml(r.currency)} from ${cleaned} on ${escapeHtml(r.transaction_date)}`;
+  });
   return `🔎 MULTIPLE (${rows.length}) matches:\n` + lines.join('\n');
 }
 
@@ -231,12 +286,24 @@ function buildReplyFromMatch(
     return (note + formatMultiple(match.rows)).slice(0, 4000);
   }
   // NOT_FOUND
-  let txt = note + `❌ Not found — no matching Zenith transaction yet`;
+  let txt = note + renderNotFoundBase();
   if (near.length > 0) {
-    const sugg = near.map((r, i) => `${i + 1}. ${escapeHtml(r.amount)} ${escapeHtml(r.currency)} from ${escapeHtml(r.sender_name)} on ${escapeHtml(r.transaction_date)}`).join('\n');
+    const sugg = near
+      .map((r) => {
+        const cleanedRaw = extractSender(r.description ?? '').senderName || r.sender_name || '—';
+        const cleaned = escapeHtml(cleanedRaw);
+        return `${escapeHtml(r.amount)} ${escapeHtml(r.currency)} • ${cleaned} • ${escapeHtml((r.transaction_date ?? '').slice(0, 10))}`;
+      })
+      .join('\n');
     txt += `\n\nNear matches (amount exact, date ±1, sender similarity >0.3):\n${sugg}`;
   }
   return txt.slice(0, 4000);
+}
+
+export function buildFoundReply(row: TxRow, rawTextForNote: string): { text: string; replyMarkup: unknown } {
+  const card = renderFoundCard(row);
+  const note = buildNonZenithNote(rawTextForNote);
+  return { text: (note + card.text).slice(0, 4000), replyMarkup: card.replyMarkup };
 }
 
 function isValidExtracted(e: ExtractedFields | null): e is ExtractedFields {
@@ -261,6 +328,8 @@ function normalizeExtracted(raw: { amount?: number; currency?: string; date?: st
   return { amount, currency, date, sender };
 }
 
+export type VerifyReply = string | { text: string; replyMarkup?: unknown };
+
 export async function handleVerify(opts: {
   chatId: string;
   fileId?: string;
@@ -268,7 +337,7 @@ export async function handleVerify(opts: {
   caption?: string;
   freeFormText?: string;
   isPdf?: boolean;
-}): Promise<string> {
+}): Promise<VerifyReply> {
   const { chatId, fileId, mime, caption, freeFormText, isPdf } = opts;
   const rawTextForNote = (caption ?? freeFormText ?? '');
 
@@ -376,6 +445,12 @@ export async function handleVerify(opts: {
       logger.warn({ chatId, err: e }, 'deterministicMatch failed');
       return '⚠️ DB error during verify — try again';
     }
+    if (match.status === 'FOUND') {
+      const found = buildFoundReply(match.row, rawTextForNote);
+      cacheVerify(contentHash, found.text);
+      logger.info({ chatId, contentHash: contentHash.slice(0, 12), amount: extracted.amount, date: extracted.date, sender: extracted.sender }, 'verify done FOUND');
+      return found;
+    }
     let near: TxRow[] = [];
     if (match.status === 'NOT_FOUND') {
       near = await nearMatch({ amount: extracted.amount, date: extracted.date, sender: extracted.sender });
@@ -418,6 +493,11 @@ export async function handleVerify(opts: {
     } catch (e) {
       logger.warn({ chatId, err: e }, 'deterministicMatch free-form failed');
       return '⚠️ DB error during verify — try again';
+    }
+    if (match.status === 'FOUND') {
+      const found = buildFoundReply(match.row, rawTextForNote);
+      cacheVerify(textHash, found.text);
+      return found;
     }
     let near: TxRow[] = [];
     if (match.status === 'NOT_FOUND') {

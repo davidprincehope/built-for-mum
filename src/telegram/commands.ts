@@ -99,7 +99,7 @@ export async function handleLogout(chatId: string): Promise<{ text: string }> {
 }
 
 // --- verify / search with rate-limit tuning per D-14 ---
-export async function handleVerifyStub(chatId: string, args: string[]): Promise<{ text: string }> {
+export async function handleVerifyStub(chatId: string, args: string[]): Promise<{ text: string; replyMarkup?: unknown }> {
   if (isRateLimited(chatId, 'verify', 5, 60_000)) {
     return { text: '⏳ Slow down — Verify cooling down, retry in ~30s. Tip: try again shortly' };
   }
@@ -108,7 +108,8 @@ export async function handleVerifyStub(chatId: string, args: string[]): Promise<
     try {
       const { handleVerify } = await import('./verify');
       const reply = await handleVerify({ chatId, freeFormText: freeText });
-      return { text: reply };
+      if (typeof reply === 'string') return { text: reply };
+      return { text: reply.text, replyMarkup: (reply as { replyMarkup?: unknown }).replyMarkup };
     } catch (e) {
       logger.warn({ err: e, chatId }, 'handleVerify stub free-form failed');
       return { text: '⚠️ Verify failed — try again' };
