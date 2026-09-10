@@ -532,6 +532,7 @@ export async function start(): Promise<void> {
   logger.info('worker ready — all timers wired (poll 15m, watch 24h, staleness 60s)');
 }
 
+// Search/export add-ons (02-03): callback_data for search pagination uses encodeURIComponent truncated 60 and offset; history pagination uses plain 4-arg dates+offset; both round-trip via handleTelegramUpdate parseCommandText
 // Auto-start when run as main (node dist/worker.js or tsx src/worker.ts)
 const _isMain = process.argv[1] && (process.argv[1].endsWith('worker.js') || process.argv[1].endsWith('worker.ts'));
 if (_isMain) {
