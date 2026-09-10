@@ -354,3 +354,12 @@ export async function start(): Promise<void> {
 
   logger.info('worker ready — all timers wired (poll 15m, watch 24h, staleness 60s)');
 }
+
+// Auto-start when run as main (node dist/worker.js or tsx src/worker.ts)
+const _isMain = process.argv[1] && (process.argv[1].endsWith('worker.js') || process.argv[1].endsWith('worker.ts'));
+if (_isMain) {
+  start().catch((err) => {
+    logger.error({ err }, 'worker start failed');
+    process.exit(1);
+  });
+}
