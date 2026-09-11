@@ -13,7 +13,9 @@ WhatsApp-based payment verification with Zenith Bank as source of truth: Gmail i
 - [ ] **Phase 4: Matching Engine** - Deterministic reference/amount/date matching with atomic claim
 - [ ] **Phase 5: Retry & Reconciliation** - 60s retry, 5-min agent window, 48h background reconciliation
 - [ ] **Phase 6: Production Hardening** - Rate limiting, validation, monitoring, admin tools
-- [ ] **Phase 7: UX Overhaul** - Drastically improve horrible UX at every interaction point, display to use, more intuitive
+- [x] **Phase 7: UX Overhaul** - Drastically improve horrible UX — polished with cards, menu, Verifying edit, natural language history
+- [ ] **Phase 8: Search & No-Command UX** - Make search much better and bot usable without typing commands
+- [ ] **Phase 8: Search & No-Command UX** - Make search much better and bot usable without typing commands
 
 ## Phase Details
 
@@ -90,6 +92,22 @@ Plans:
 
 **Plans**: TBD
 
+### Phase 8: Search & No-Command UX
+
+**Goal**: Make search much better and make the bot usable without typing any commands — every interaction via buttons, menus, and natural language
+**Depends on**: Phase 7
+**Requirements**: Full-text AI search with DB GIN trigram + amount/date, inline keyboards and persistent menu for all commands, natural language entry
+**Success Criteria**:
+
+  1. Admin can find any transaction via natural language search with accurate results
+  2. Admin never needs to type a slash command — all actions via buttons/menu
+
+**Plans**: 3/3 plans executed
+
+- [x] 08-01-PLAN.md
+- [x] 08-02-PLAN.md
+- [x] 08-03-PLAN.md
+
 ### Phase 4: Matching Engine
 
 **Goal**: Backend reliably distinguishes Confirmed / Needs Review / Mismatch / Not Received and prevents double-claim
@@ -99,6 +117,18 @@ Plans:
 
   1. Same real transaction never confirms two different receipts
   2. Level 1 only path to automatic CONFIRMED
+
+**Plans**: TBD
+
+### Phase 8: Search & No-Command UX
+
+**Goal**: Make search much better and make the bot usable without typing any commands — every interaction via buttons, menus, and natural language
+**Depends on**: Phase 7
+**Requirements**: Full-text AI search with DB GIN trigram + amount/date, inline keyboards and persistent menu for all commands, natural language entry
+**Success Criteria**:
+
+  1. Admin can find any transaction via natural language search with accurate results
+  2. Admin never needs to type a slash command — all actions via buttons/menu
 
 **Plans**: TBD
 
@@ -113,6 +143,18 @@ Plans:
 
 **Plans**: TBD
 
+### Phase 8: Search & No-Command UX
+
+**Goal**: Make search much better and make the bot usable without typing any commands — every interaction via buttons, menus, and natural language
+**Depends on**: Phase 7
+**Requirements**: Full-text AI search with DB GIN trigram + amount/date, inline keyboards and persistent menu for all commands, natural language entry
+**Success Criteria**:
+
+  1. Admin can find any transaction via natural language search with accurate results
+  2. Admin never needs to type a slash command — all actions via buttons/menu
+
+**Plans**: TBD
+
 ### Phase 6: Production Hardening
 
 **Goal**: Production-ready with monitoring, rate limiting, and admin tools
@@ -124,16 +166,32 @@ Plans:
 
 **Plans**: TBD
 
+### Phase 8: Search & No-Command UX
+
+**Goal**: Make search much better and make the bot usable without typing any commands — every interaction via buttons, menus, and natural language
+**Depends on**: Phase 7
+**Requirements**: Full-text AI search with DB GIN trigram + amount/date, inline keyboards and persistent menu for all commands, natural language entry
+**Success Criteria**:
+
+  1. Admin can find any transaction via natural language search with accurate results
+  2. Admin never needs to type a slash command — all actions via buttons/menu
+
+**Plans**: TBD
+
 ### Phase 7: UX Overhaul
+
 **Goal**: Drastically improve horrible UX at every point of interaction — display to use, more intuitive
 **Depends on**: Phase 2
 **Requirements**: D-01 card-per-TX 10/page, D-02 status card, D-04 help+keyboard, D-05/D-15 Menu Button, D-06 login, D-07 any image=verify, D-08 NL history, D-09 rich FOUND, D-10 near-matches, D-11 cleaned sender, D-12 Verifying edit, D-13 Welcome, D-14 friendly errors, D-16 slash-less search, D-17 deleteMessage
 **Success Criteria**:
+
   1. Every Telegram interaction is intuitive, professional, and requires minimal admin effort
   2. Display is clean, consistent, and guides the admin naturally
+
 **Plans**: 3/3 plans executed (07-01 tracer, 07-02 verify polish, 07-03 NL history + slash-less + pagination) — Phase 7 complete
 
 Plans:
+
 - [x] 07-01-PLAN.md — Tracer: deleteMessage for /login, card-per-TX history 10/page, Welcome card, friendly errors, Menu Button on PORT 8080
 - [x] 07-02-PLAN.md — Verify polish: rich FOUND/NOT_FOUND cards, Verifying… then edit, cleaned sender, near-matches threshold
 - [x] 07-03-PLAN.md — NL history via gemma + slash-less search/history + inline pagination 10/page
