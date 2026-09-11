@@ -370,7 +370,7 @@ function createHttpServer(): import('http').Server {
         const { cmd } = parseCommandText(rawText);
         logger.info({ chatId, cmd: cmd || '(non-command)' }, 'telegram webhook dispatch');
 
-        // Verifying… placeholder for media verify (any image = verify per D-07) — send instantly then edit per D-12
+        // Verifying… placeholder for media verify — send typing + instant placeholder then edit per D-11 RESEARCH Pattern 6
         let placeholderId: number | null = null;
         const mediaBody = body as { message?: { photo?: unknown[]; document?: unknown } };
         const hasMedia = !!(mediaBody?.message?.photo || mediaBody?.message?.document);
@@ -378,7 +378,8 @@ function createHttpServer(): import('http').Server {
           try {
             const { isLoggedIn } = await import('./telegram/session');
             if (isLoggedIn(chatId)) {
-              const { sendTelegramMessageWithId } = await import('./telegram/sendMessage');
+              const { sendChatAction, sendTelegramMessageWithId } = await import('./telegram/sendMessage');
+              void sendChatAction(chatId, 'typing');
               placeholderId = await sendTelegramMessageWithId(chatId, '⏳ <b>Verifying</b>… <i>extracting…</i>', { parseMode: 'HTML' });
             }
           } catch {}
