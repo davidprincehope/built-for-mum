@@ -2,16 +2,13 @@ import { logger } from '../observability/logger';
 import { getBotToken } from './sendMessage';
 
 export const COMMANDS: Array<{ command: string; description: string }> = [
-  { command: 'help', description: 'Show admin console' },
-  { command: 'status', description: 'Worker health • DB & pipeline' },
-  { command: 'balance', description: 'Available & current balance • last tx' },
-  { command: 'history', description: 'Browse ledger by date (Africa/Lagos)' },
-  { command: 'search', description: 'Find transactions by name or amount' },
-  { command: 'verify', description: 'Check a receipt (photo, PDF, or text)' },
-  { command: 'summary', description: '24h / 7d totals & last transaction' },
-  { command: 'export', description: 'Download CSV for a date range' },
-  { command: 'suspicious', description: 'Show recent spoof attempts' },
-  { command: 'logs', description: 'Tail worker logs' },
+  { command: 'balance', description: 'Available & current + last TX' },
+  { command: 'history', description: 'Browse by date (Africa/Lagos)' },
+  { command: 'search', description: 'Find by name, amount, date' },
+  { command: 'verify', description: 'Check receipt (photo/PDF/text)' },
+  { command: 'summary', description: '24h/7d totals' },
+  { command: 'status', description: 'Worker health' },
+  { command: 'help', description: 'All commands' },
 ];
 
 export async function registerMenuIfConfigured(): Promise<void> {
@@ -22,7 +19,7 @@ export async function registerMenuIfConfigured(): Promise<void> {
   }
   const api = `https://api.telegram.org/bot${token}`;
 
-  // 1) setMyCommands — defines what typing "/" shows
+  // 1) setMyCommands — defines what typing "/" shows, scope all_private_chats so it only appears in DMs
   try {
     const r = await fetch(`${api}/setMyCommands`, {
       method: 'POST',
@@ -33,7 +30,7 @@ export async function registerMenuIfConfigured(): Promise<void> {
       const j = (await r.json().catch(() => ({}))) as { description?: string };
       logger.warn({ status: r.status, description: j.description }, 'setMyCommands failed');
     } else {
-      logger.info('setMyCommands ok — 10 commands');
+      logger.info('setMyCommands ok — 7 commands');
     }
   } catch (e) {
     logger.warn({ err: e }, 'setMyCommands error — boot continues');

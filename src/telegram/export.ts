@@ -2,6 +2,7 @@ import { getPool } from '../db/pool';
 import { logger } from '../observability/logger';
 import { escapeHtml } from './sendMessage';
 import { parseLagosDateRange } from './history';
+import { formatNaira } from './naira';
 
 function getBotToken(): string {
   const direct = process.env.TELEGRAM_BOT_TOKEN ?? '';
@@ -208,7 +209,7 @@ export async function handleDuplicates(): Promise<{ text: string; replyMarkup?: 
     const divider = `───┼─────────────┼────────────┼──────`;
     const lines = rows.map((r, i) => {
       const num = String(i + 1).padStart(2, ' ');
-      const amt = `${r.amount} ${r.currency}`.padEnd(11, ' ');
+      const amt = formatNaira(r.amount).padEnd(14, ' ');
       const date = (r.transaction_date ?? '').slice(0, 10).padEnd(10, ' ');
       const cnt = r.c.padStart(5, ' ');
       return `${num} │ ${amt} │ ${date} │ ${cnt}`;
@@ -278,14 +279,13 @@ export async function handleSummary(): Promise<{ text: string; replyMarkup?: unk
     let lastLine: string;
     if (lastRows.length > 0) {
       const r = lastRows[0];
-      const amt = escapeHtml(r.amount ?? '');
-      const curr = escapeHtml(r.currency ?? 'NGN');
+      const amt = escapeHtml(formatNaira(r.amount ?? ''));
       const sender = escapeHtml((r.sender_name ?? '').substring(0, 22));
       const date = escapeHtml((r.transaction_date ?? '').slice(0, 10));
       const time = escapeHtml((r.transaction_time ?? '').slice(0, 5));
       const lagosDisplay = `${date} ${time} Africa/Lagos`;
-      lastLine = `${amt} ${curr} from ${sender} • ${lagosDisplay}`;
-      if (r.available_balance) lastLine += ` • Bal ${escapeHtml(r.available_balance)}`;
+      lastLine = `${amt} from ${sender} • ${lagosDisplay}`;
+      if (r.available_balance) lastLine += ` • Bal ${escapeHtml(formatNaira(r.available_balance))}`;
     } else {
       lastLine = '<i>No transactions yet</i>';
     }
@@ -295,8 +295,8 @@ export async function handleSummary(): Promise<{ text: string; replyMarkup?: unk
     let text = [
       `📊 <b>Summary</b> <i>${escapeHtml(lagosToday)} Africa/Lagos</i>`,
       '━━━━━━━━━━━━━━━━━━━━',
-      `24h: <b>${escapeHtml(todayCount)}</b> • NGN ${escapeHtml(todaySum)}`,
-      `7d: <b>${escapeHtml(weekCount)}</b> • NGN ${escapeHtml(weekSum)}`,
+      `24h: <b>${escapeHtml(todayCount)}</b> • ${escapeHtml(formatNaira(todaySum))}`,
+      `7d: <b>${escapeHtml(weekCount)}</b> • ${escapeHtml(formatNaira(weekSum))}`,
       `Total: <b>${escapeHtml(totalCount)}</b>`,
       `Last: ${lastLine}`,
     ].join('\n');

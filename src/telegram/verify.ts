@@ -5,6 +5,7 @@ import { escapeHtml } from './sendMessage';
 import { downloadTelegramFile, tmpWriteWithHash, extFromMime } from './media';
 import { openRouterVision, openRouterPdf, openRouterTextParse, type ExtractedFields } from './openrouter';
 import { extractSender } from '../zenith/sender';
+import { formatNaira } from './naira';
 
 const verifyCache = new Map<string, { result: string; at: number }>();
 export const VERIFY_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
@@ -234,8 +235,7 @@ export async function nearMatch(params: { amount: number; date: string; sender?:
 }
 
 export function renderFoundCard(row: TxRow): { text: string; replyMarkup: unknown } {
-  const amt = escapeHtml(row.amount ?? '');
-  const curr = escapeHtml(row.currency ?? 'NGN');
+  const amt = escapeHtml(formatNaira(row.amount ?? ''));
   const cleanedRaw = extractSender(row.description ?? '').senderName || row.sender_name || '—';
   const cleaned = escapeHtml(cleanedRaw);
   const dateRaw = (row.transaction_date ?? '').slice(0, 10);
@@ -248,10 +248,10 @@ export function renderFoundCard(row: TxRow): { text: string; replyMarkup: unknow
   else if (desc.includes('KUDA')) via = 'KUDA';
   else via = 'Zenith';
   const viaEsc = escapeHtml(via);
-  const avail = row.available_balance ? escapeHtml(row.available_balance) : '—';
+  const avail = row.available_balance ? escapeHtml(formatNaira(row.available_balance)) : '—';
   const text = [
     `✅ <b>VERIFIED</b> — this credit is in the Zenith ledger`,
-    `💳 <b>Amount:</b> <code>${amt} ${curr}</code>`,
+    `💳 <b>Amount:</b> <code>${amt}</code>`,
     `👤 <b>Sender:</b> <code>${cleaned}</code>`,
     `📅 <b>Date:</b> <code>${date}</code>${time} <i>Africa/Lagos</i> • via <b>${viaEsc}</b>`,
     `💰 <b>Available after:</b> <code>${avail}</code>`,
@@ -277,7 +277,7 @@ function formatMultiple(rows: TxRow[]): string {
   const lines = rows.slice(0, 5).map((r, i) => {
     const cleanedRaw = extractSender(r.description ?? '').senderName || r.sender_name || '—';
     const cleaned = escapeHtml(cleanedRaw);
-    return `${i + 1}. ${escapeHtml(r.amount)} ${escapeHtml(r.currency)} from ${cleaned} on ${escapeHtml(r.transaction_date)}`;
+    return `${i + 1}. ${escapeHtml(formatNaira(r.amount))} from ${cleaned} on ${escapeHtml(r.transaction_date)}`;
   });
   return `🔎 MULTIPLE (${rows.length}) matches:\n` + lines.join('\n');
 }
@@ -305,7 +305,7 @@ function buildReplyFromMatch(
       .map((r) => {
         const cleanedRaw = extractSender(r.description ?? '').senderName || r.sender_name || '—';
         const cleaned = escapeHtml(cleanedRaw);
-        return `${escapeHtml(r.amount)} ${escapeHtml(r.currency)} • ${cleaned} • ${escapeHtml((r.transaction_date ?? '').slice(0, 10))}`;
+        return `${escapeHtml(formatNaira(r.amount))} • ${cleaned} • ${escapeHtml((r.transaction_date ?? '').slice(0, 10))}`;
       })
       .join('\n');
     txt += `\n\nNear matches (amount exact, date ±1, sender similarity >0.3):\n${sugg}`;

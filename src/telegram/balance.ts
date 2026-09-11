@@ -1,5 +1,6 @@
 import { getPool } from '../db/pool';
 import { escapeHtml } from './sendMessage';
+import { formatNaira } from './naira';
 
 async function withTimeout<T>(p: Promise<T>, ms = 5000, fallback: T): Promise<T> {
   let timer: NodeJS.Timeout | undefined;
@@ -57,29 +58,48 @@ export async function buildBalanceReply(): Promise<{ text: string; replyMarkup?:
     const r = rows[0] as Record<string, string | null>;
     const availRaw = r.available_balance;
     const currRaw = r.current_balance;
-    const avail = availRaw != null && availRaw !== '' ? escapeHtml(availRaw) : '—';
-    const curr = currRaw != null && currRaw !== '' ? escapeHtml(currRaw) : '—';
-    const amount = r.amount != null && r.amount !== '' ? escapeHtml(r.amount) : '—';
-    const currency = r.currency ? escapeHtml(r.currency) : 'NGN';
+    const avail = escapeHtml(formatNaira(availRaw));
+    const curr = escapeHtml(formatNaira(currRaw));
+    const amountNaira = formatNaira(r.amount);
+    const amount = escapeHtml(amountNaira);
     const sender = r.sender_name ? escapeHtml(r.sender_name) : '—';
     const date = r.transaction_date ? escapeHtml(r.transaction_date.slice(0, 10)) : '';
     const time = r.transaction_time ? escapeHtml(r.transaction_time.slice(0, 5)) : '';
     const branch = r.branch ? escapeHtml(r.branch) : '';
 
+    // 7d summary: count, sum, avg — parameterised and timeout-safe
+    const summaryFallback = { rows: [{ cnt: '0', sum: '0' }] } as unknown as import('pg').QueryResult<{ cnt: string; sum: string }>;
+    const summaryRes = await withTimeout(
+      pool.query<{ cnt: string; sum: string }>(
+        `SELECT COUNT(*)::text AS cnt, COALESCE(SUM(amount),0)::text AS sum FROM transactions WHERE transaction_date >= CURRENT_DATE - INTERVAL '7 days'`,
+      ),
+      3000,
+      summaryFallback,
+    );
+    const summaryRow = (summaryRes as { rows: Array<{ cnt: string; sum: string }> }).rows[0] ?? { cnt: '0', sum: '0' };
+    const cnt = summaryRow.cnt ?? '0';
+    const sum = summaryRow.sum ?? '0';
+    const cntNum = Number(cnt) || 0;
+    const sumNum = Number(String(sum).replace(/,/g, '')) || 0;
+    const avgNum = cntNum > 0 ? sumNum / cntNum : 0;
+    const sumFormatted = escapeHtml(formatNaira(sum));
+    const avgFormatted = escapeHtml(formatNaira(avgNum));
+
     const lines: string[] = [];
     lines.push('💰 <b>Balance</b>');
     lines.push('━━━━━━━━━━━━━━━━━━━━');
-    lines.push(`💰 <b>Available:</b> <code>${avail}</code>`);
-    lines.push(`💳 <b>Current:</b> <code>${curr}</code>`);
+    lines.push(`Available: ${avail} • Current: ${curr} • Last: ${date}${time ? ' ' + time : ''}`);
     lines.push('');
     lines.push('📅 <b>Last Transaction</b>');
     if (date) {
-      lines.push(`  💳 <code>${amount} ${currency}</code> from <code>${sender}</code>`);
+      lines.push(`  💳 <code>${amount}</code> from <code>${sender}</code>`);
       lines.push(`  📅 <code>${date}</code>${time ? ` <code>${time}</code>` : ''} <i>Africa/Lagos</i>`);
       if (branch) lines.push(`  🔖 <code>${branch}</code>`);
     } else {
-      lines.push(`  💳 <code>${amount} ${currency}</code> from <code>${sender}</code>`);
+      lines.push(`  💳 <code>${amount}</code> from <code>${sender}</code>`);
     }
+    lines.push('');
+    lines.push(`7d: ${escapeHtml(cnt)} tx, total ${sumFormatted}, avg ${avgFormatted}`);
 
     let text = lines.join('\n');
     if (text.length > 4000) text = text.slice(0, 3990) + '\n… truncated';

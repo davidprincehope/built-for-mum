@@ -6,6 +6,7 @@ import { logRing } from './ringBuffer';
 import { isRateLimited } from './rateLimit';
 import { sendTelegramMessage, escapeHtml } from './sendMessage';
 import { parseCommandText } from './webhook';
+import { formatNaira } from './naira';
 
 // --- helpers ---
 
@@ -387,7 +388,7 @@ export async function handleHistory(rawLimit: number | string | undefined): Prom
     const divider = `───┼─────────────┼──────────────────`;
     const lines = rows.map((r, i) => {
       const num = String(i + 1).padStart(2, ' ');
-      const amt = `${r.amount} ${r.currency}`.padEnd(11, ' ');
+      const amt = formatNaira(r.amount).padEnd(14, ' ');
       const sender = (r.sender_name ?? '').substring(0, 18).padEnd(18, ' ');
       const ref = r.transaction_reference ? ` ref:${r.transaction_reference.slice(0, 12)}` : '';
       const date = r.transaction_date ? ` ${r.transaction_date}` : '';
@@ -395,7 +396,7 @@ export async function handleHistory(rawLimit: number | string | undefined): Prom
     });
 
     const table = [header, divider, ...lines].join('\n');
-    const totalLine = `Total: ${rows.length} shown • DB has more, use /history 10`;
+    const totalLine = `Total: ${rows.length} shown • DB has more, use /history 5`;
 
     const text = [
       `💳 <b>Recent Transactions</b> <i>(last ${rows.length})</i>`,

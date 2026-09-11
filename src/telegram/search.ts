@@ -3,6 +3,8 @@ import { isValid } from 'date-fns';
 import { getPool } from '../db/pool';
 import { logger } from '../observability/logger';
 import { escapeHtml } from './sendMessage';
+import { formatNaira } from './naira';
+import { extractSender } from '../zenith/sender';
 
 const OPENROUTER_URL = 'https://openrouter.ai/api/v1/chat/completions';
 const REFERER = 'https://example.com';
@@ -301,7 +303,7 @@ export async function handleSearch(
     return { text: 'Usage: /search <query> e.g. /search last week large transfers or /search SAMPLE SENDER 100k September' };
   }
   const offset = Math.max(0, Math.floor(opts.offset ?? 0));
-  const limit = 10;
+  const limit = 5;
 
   // intent: try OpenRouter, fallback to local
   let intent: SearchIntent | null = null;
@@ -369,7 +371,7 @@ export async function handleSearch(
       available_balance: string;
       branch: string | null;
     }>(
-      `SELECT amount::text,currency,transaction_date::text,transaction_time::text,sender_name,description,available_balance::text,branch FROM transactions ${whereClause} ORDER BY transaction_date DESC, created_at DESC LIMIT 10 OFFSET $6`,
+      `SELECT amount::text,currency,transaction_date::text,transaction_time::text,sender_name,description,available_balance::text,branch FROM transactions ${whereClause} ORDER BY transaction_date DESC, created_at DESC LIMIT 5 OFFSET $6`,
       [senderParam, minAmountParam, maxAmountParam, fromDateParam, toDateParam, offset],
     ),
     5000,
@@ -391,28 +393,47 @@ export async function handleSearch(
     };
   }
 
+  // Render 5 hybrid cards with formatNaira, divider, 4096 safety — same contract as history
   const header = `🔍 <b>Search</b> <code>${escapeHtml(q)}</code> • <i>Found ${total} matching</i>`;
+  const cardDivider = '\n━━━━━━━━━━━━\n';
   const divider = '━━━━━━━━━━━━━━━━━━━━';
-  const lines = rows.map((r, i) => {
-    const idx = offset + i + 1;
-    const amt = escapeHtml(r.amount ?? '');
-    const curr = escapeHtml(r.currency ?? 'NGN');
-    const senderRaw = r.sender_name ?? r.description ?? '';
-    // reuse extractSender-style: just display sender_name trimmed
-    const sender = escapeHtml((senderRaw ?? '').substring(0, 22));
-    const date = escapeHtml((r.transaction_date ?? '').slice(0, 10));
-    const time = escapeHtml((r.transaction_time ?? '').slice(0, 5));
-    const branch = r.branch ? ` • ${escapeHtml(r.branch)}` : '';
-    return `${idx}. <b>${amt} ${curr}</b> — ${sender} • ${date} ${time}${branch}`;
+  const cards = rows.map((r) => {
+    const cleaned = extractSender(r.description ?? '').senderName || r.sender_name || '—';
+    const via = r.description?.includes('NIP') ? 'NIP' : r.description?.includes('KUDA') ? 'KUDA' : 'Zenith';
+    const datePart = escapeHtml((r.transaction_date ?? '').slice(0, 10));
+    const timePart = r.transaction_time ? ` <code>${escapeHtml(r.transaction_time.slice(0, 5))}</code>` : '';
+    const amt = escapeHtml(formatNaira(r.amount));
+    const viaEsc = escapeHtml(via);
+    const branchLine = r.branch ? `🔖 <code>${escapeHtml(r.branch)}</code>` : '';
+    const balanceLine = r.available_balance ? `💰 <code>${escapeHtml(formatNaira(r.available_balance))}</code>` : '';
+    return [
+      `💳 <b>${amt}</b>`,
+      `👤 <b>Sender:</b> <code>${escapeHtml(cleaned.slice(0, 40))}</code>`,
+      `📅 <b>Date:</b> <code>${datePart}</code>${timePart} <i>Africa/Lagos</i>`,
+      `🏦 <b>via ${viaEsc}</b>`,
+      branchLine,
+      balanceLine,
+    ].filter(Boolean).join('\n');
   });
-
-  let text = [header, divider, ...lines].join('\n');
+  let text = [header, divider, cards.join(cardDivider)].join('\n');
   if (total > offset + rows.length) {
     text += `\n<i>Showing ${offset + 1}-${offset + rows.length} of ${total}</i>`;
   } else {
     text += `\n<i>Total: ${total} matching</i>`;
   }
-  if (text.length > 4000) text = text.slice(0, 4000);
+  // 4096 safe: drop whole cards if >3800
+  if (text.length > 3800) {
+    let kept = [...cards];
+    const footerBase = `\n<i>Showing ${offset + 1}-${offset + rows.length} of ${total}</i>`;
+    const totalFooter = total > offset + rows.length ? footerBase : `\n<i>Total: ${total} matching</i>`;
+    while (kept.length > 1 && ([header, divider, kept.join(cardDivider)].join('\n') + totalFooter).length > 3800) {
+      kept.pop();
+    }
+    const dropped = cards.length - kept.length;
+    const suffix = dropped > 0 ? `\n… + ${dropped} more — tap Next 5` : '';
+    text = [header, divider, kept.join(cardDivider)].join('\n') + suffix + totalFooter;
+  }
+  if (text.length > 4000) text = text.slice(0, 3990) + '\n… truncated';
 
   // pagination ≤64B per RESEARCH Pitfall 1: truncate to 30 before encode so %20 bloat stays under limit
   const truncatedQuery = q.slice(0, 30);
@@ -420,12 +441,12 @@ export async function handleSearch(
   const buttons: Array<Array<{ text: string; callback_data: string; style?: string }>> = [];
   const navRow: Array<{ text: string; callback_data: string; style?: string }> = [];
   if (offset > 0) {
-    const prevOff = Math.max(0, offset - 10);
+    const prevOff = Math.max(0, offset - 5);
     navRow.push({ text: '⬅️ Prev', callback_data: `/search ${encoded} ${prevOff}` });
   }
   if (offset + limit < total) {
     const nextOff = offset + limit;
-    navRow.push({ text: 'Next ➡️', callback_data: `/search ${encoded} ${nextOff}`, style: 'primary' });
+    navRow.push({ text: 'Next 5 ➡️', callback_data: `/search ${encoded} ${nextOff}`, style: 'primary' });
   }
   if (navRow.length) buttons.push(navRow);
   // second row: new search + menu

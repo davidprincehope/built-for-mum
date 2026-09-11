@@ -3,6 +3,7 @@ import { getPool } from '../db/pool';
 import { escapeHtml } from './sendMessage';
 import { extractSender } from '../zenith/sender';
 import { logger } from '../observability/logger';
+import { formatNaira } from './naira';
 
 async function withTimeout<T>(p: Promise<T>, ms = 5000, fallback: T): Promise<T> {
   let timer: NodeJS.Timeout | undefined;
@@ -66,11 +67,12 @@ function renderTxCard(row: TxRow): string {
   const datePart = escapeHtml((row.transaction_date ?? '').slice(0, 10));
   const timePart = row.transaction_time ? ` <code>${escapeHtml(row.transaction_time.slice(0, 5))}</code>` : '';
   const branchLine = row.branch ? `🔖 <b>Branch:</b> <code>${escapeHtml(row.branch)}</code>` : null;
-  const balanceLine = row.available_balance ? `💰 <b>Balance:</b> <code>${escapeHtml(row.available_balance)}</code>` : null;
+  const balanceLine = row.available_balance ? `💰 <b>Balance:</b> <code>${escapeHtml(formatNaira(row.available_balance))}</code>` : null;
   const descCleaned = escapeHtml(cleaned).slice(0, 60);
   const viaEsc = escapeHtml(via);
+  const amountLine = escapeHtml(formatNaira(row.amount));
   const lines = [
-    `💳 <b>${escapeHtml(row.amount)} ${escapeHtml(row.currency)}</b>`,
+    `💳 <b>${amountLine}</b>`,
     `👤 <b>Sender:</b> <code>${escapeHtml(cleaned)}</code>`,
     `📅 <b>Date:</b> <code>${datePart}</code>${timePart} <i>Africa/Lagos</i>`,
     `🏦 <b>via ${viaEsc}</b>`,
@@ -85,14 +87,14 @@ export async function handleHistoryWithRange(args: string[], opts?: { limit?: nu
   const pool = getPool();
   let from: string | null = null;
   let to: string | null = null;
-  let limit = opts?.limit ?? 10;
+  let limit = opts?.limit ?? 5;
   let offset = opts?.offset ?? 0;
 
   limit = Math.max(1, Math.min(50, Math.floor(limit)));
   offset = Math.max(0, Math.floor(offset));
 
   if (!args || args.length === 0) {
-    limit = Math.min(limit, 10);
+    limit = Math.min(limit, 5);
     try {
       const result = await withTimeout(
         pool.query<TxRow>(
@@ -104,8 +106,6 @@ export async function handleHistoryWithRange(args: string[], opts?: { limit?: nu
       );
       const rows = (result as { rows: Array<TxRow> }).rows ?? [];
       if (!rows.length) return { text: '📭 <b>History</b>\n<i>No transactions yet</i>' };
-      // For default view, total unknown — use rows length as placeholder, no pagination beyond next check
-      // Fetch count for pagination if rows == limit
       let total = rows.length;
       if (rows.length === limit) {
         try {
@@ -123,7 +123,7 @@ export async function handleHistoryWithRange(args: string[], opts?: { limit?: nu
     }
   }
 
-  // pagination for default recent: "/history 10 10" => limit offset
+  // pagination for default recent: "/history 5 10" => limit offset
   if (args.length === 2 && /^\d+$/.test(args[0]) && /^\d+$/.test(args[1])) {
     limit = Math.max(1, Math.min(50, Number(args[0])));
     offset = Math.max(0, Number(args[1]));
@@ -164,19 +164,16 @@ export async function handleHistoryWithRange(args: string[], opts?: { limit?: nu
   }
 
   if (!from || !to) {
-    // Fast path: explicit 2-arg dates bypass AI (per D-08 / T-07-15)
     if (args.length === 2) {
       const parsed = parseLagosDateRange(args);
       if (!('error' in parsed)) {
         from = (parsed as { from: string; to: string }).from;
         to = (parsed as { from: string; to: string }).to;
       } else {
-        // If any arg looks like explicit date (YYYY-MM-DD or DD/MM/YYYY), show parse error — user intended explicit syntax
         const hasExplicitDates = args.some((a) => /^\d{4}-\d{2}-\d{2}$/.test(a) || /^\d{2}\/\d{2}\/\d{4}$/.test(a));
         if (hasExplicitDates) {
           return { text: escapeHtml((parsed as { error: string }).error) };
         }
-        // NL fallback only when explicit parse failed and text contains letters
         const joined = args.join(' ').trim();
         const hasWords = /[A-Za-z]/.test(joined);
         if (hasWords) {
@@ -204,14 +201,12 @@ export async function handleHistoryWithRange(args: string[], opts?: { limit?: nu
           if (aiFrom && aiTo) {
             from = aiFrom; to = aiTo;
           } else {
-            // Local heuristic fallback (Rule 2 fallback per T-07-12)
             try {
               const { localKeywordIntent } = await import('./search');
               const local = localKeywordIntent(joined);
               if (local.fromDate && local.toDate && /^\d{4}-\d{2}-\d{2}$/.test(local.fromDate) && /^\d{4}-\d{2}-\d{2}$/.test(local.toDate) && local.fromDate <= local.toDate) {
                 from = local.fromDate; to = local.toDate;
               } else {
-                // manual month/last-week already covered by localKeywordIntent, but keep error hint
                 return { text: 'Invalid date — try DD/MM/YYYY or \'last week\'' };
               }
             } catch {
@@ -223,8 +218,6 @@ export async function handleHistoryWithRange(args: string[], opts?: { limit?: nu
         }
       }
     } else if (args.length === 1) {
-      // Single natural-language token like "September" or "last week" with 1 arg?
-      // Treat as NL if contains letters
       const joined = args.join(' ').trim();
       if (/[A-Za-z]/.test(joined)) {
         let aiFrom: string | null = null;
@@ -259,7 +252,6 @@ export async function handleHistoryWithRange(args: string[], opts?: { limit?: nu
         const err = (parsed as { error: string }).error;
         if (err !== 'no-args') return { text: escapeHtml(err) };
       }
-      // If args >2 and not 4-arg pagination, try NL on full joined when letters present
       const joined = args.join(' ').trim();
       if (!from && /[A-Za-z]/.test(joined)) {
         try {
@@ -325,11 +317,10 @@ function formatRows(
     ? `Total: ${ctx.total} shown`
     : `Total: ${ctx.total} in range`;
 
-  // Enforce 10 per message already via limit; if rendered text exceeds 3800 drop last whole cards
   const headerWithDiv = `${rangeHeader}\n━━━━━━━━━━━━━━━━━━━━\n`;
   let text = headerWithDiv + joined + `\n<i>${escapeHtml(totalLine)}</i>`;
 
-  // 4096 safe: if exceeds 3800, drop last whole cards then append truncation hint
+  // 4096 safe: if exceeds 3800, drop last whole cards then append truncation hint — never slice mid-card
   if (text.length > 3800) {
     let kept = [...cards];
     while (kept.length > 1 && (headerWithDiv + kept.join(divider) + `\n<i>${escapeHtml(totalLine)}</i>`).length > 3800) {
@@ -337,7 +328,7 @@ function formatRows(
     }
     const dropped = cards.length - kept.length;
     joined = kept.join(divider);
-    const suffix = dropped > 0 ? `\n… + ${dropped} more — tap Next 10` : '';
+    const suffix = dropped > 0 ? `\n… + ${dropped} more — tap Next 5` : '';
     text = headerWithDiv + joined + suffix + `\n<i>${escapeHtml(totalLine)}</i>`;
   }
 
@@ -349,25 +340,21 @@ function formatRows(
   const navRow: Array<{ text: string; callback_data: string; style?: string }> = [];
   if (hasPrev) {
     const prevOff = Math.max(0, ctx.offset - ctx.limit);
-    const cbFrom = ctx.from || 'recent';
-    const cbTo = ctx.to || 'recent';
-    // Keep short ≤40B: use from/to only if not default; otherwise use simple offset
     if (ctx.isDefault) {
-      navRow.push({ text: '⬅️ Prev', callback_data: `/history 10 ${prevOff}` });
+      navRow.push({ text: '⬅️ Prev', callback_data: `/history 5 ${prevOff}` });
     } else {
-      navRow.push({ text: '⬅️ Prev', callback_data: `/history ${ctx.from} ${ctx.to} ${ctx.limit} ${prevOff}` });
+      navRow.push({ text: '⬅️ Prev', callback_data: `/history ${ctx.from} ${ctx.to} 5 ${prevOff}` });
     }
   }
   if (hasNext) {
     const nextOff = ctx.offset + ctx.limit;
     if (ctx.isDefault) {
-      navRow.push({ text: 'Next 10 ➡️', callback_data: `/history 10 ${nextOff}`, style: 'primary' });
+      navRow.push({ text: 'Next 5 ➡️', callback_data: `/history 5 ${nextOff}`, style: 'primary' });
     } else {
-      navRow.push({ text: 'Next 10 ➡️', callback_data: `/history ${ctx.from} ${ctx.to} ${ctx.limit} ${nextOff}`, style: 'primary' });
+      navRow.push({ text: 'Next 5 ➡️', callback_data: `/history ${ctx.from} ${ctx.to} 5 ${nextOff}`, style: 'primary' });
     }
   }
   if (navRow.length) buttons.push(navRow);
-  // persistent back row
   buttons.push([{ text: '← Back to menu', callback_data: '/help' }]);
 
   const replyMarkup = { inline_keyboard: buttons };
