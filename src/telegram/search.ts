@@ -378,9 +378,17 @@ export async function handleSearch(
   const rows = (rowsResult as { rows: Array<Record<string, string>> }).rows ?? [];
 
   if (!rows || rows.length === 0) {
-    const msg = `🔍 <b>Search</b> <code>${escapeHtml(q)}</code>\n<i>No matches — try /history or narrower terms</i>\nTotal: 0 matching`;
+    const msg = `🔍 <b>Search</b> <code>${escapeHtml(q)}</code>\n<i>No matches — try a broader name, a different amount, or check history</i>\nTotal: 0 matching`;
     const sliced = msg.length > 4000 ? msg.slice(0, 4000) : msg;
-    return { text: sliced };
+    return {
+      text: sliced,
+      replyMarkup: {
+        inline_keyboard: [
+          [{ text: '📜 View history', callback_data: '/history 5' }],
+          [{ text: '← Back to menu', callback_data: '/help' }],
+        ],
+      },
+    };
   }
 
   const header = `🔍 <b>Search</b> <code>${escapeHtml(q)}</code> • <i>Found ${total} matching</i>`;
@@ -409,18 +417,23 @@ export async function handleSearch(
   // pagination ≤64B per RESEARCH Pitfall 1: truncate to 30 before encode so %20 bloat stays under limit
   const truncatedQuery = q.slice(0, 30);
   const encoded = encodeURIComponent(truncatedQuery);
-  const buttons: Array<Array<{ text: string; callback_data: string }>> = [];
-  const navRow: Array<{ text: string; callback_data: string }> = [];
+  const buttons: Array<Array<{ text: string; callback_data: string; style?: string }>> = [];
+  const navRow: Array<{ text: string; callback_data: string; style?: string }> = [];
   if (offset > 0) {
     const prevOff = Math.max(0, offset - 10);
     navRow.push({ text: '⬅️ Prev', callback_data: `/search ${encoded} ${prevOff}` });
   }
   if (offset + limit < total) {
     const nextOff = offset + limit;
-    navRow.push({ text: 'Next ➡️', callback_data: `/search ${encoded} ${nextOff}` });
+    navRow.push({ text: 'Next ➡️', callback_data: `/search ${encoded} ${nextOff}`, style: 'primary' });
   }
   if (navRow.length) buttons.push(navRow);
-  const replyMarkup = buttons.length ? { inline_keyboard: buttons } : undefined;
+  // second row: new search + menu
+  buttons.push([
+    { text: '🔍 New search', callback_data: '/help' },
+    { text: '← Back to menu', callback_data: '/help' },
+  ]);
+  const replyMarkup = { inline_keyboard: buttons };
 
   return { text, replyMarkup };
 }

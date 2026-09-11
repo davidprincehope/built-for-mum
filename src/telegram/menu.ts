@@ -2,13 +2,16 @@ import { logger } from '../observability/logger';
 import { getBotToken } from './sendMessage';
 
 export const COMMANDS: Array<{ command: string; description: string }> = [
-  { command: 'help', description: 'Admin console — all commands' },
-  { command: 'status', description: 'Worker health, DB & pipeline' },
-  { command: 'balance', description: 'Available & current + last TX' },
-  { command: 'history', description: 'Range Lagos DD/MM or YYYY-MM-DD' },
-  { command: 'search', description: 'Full-text AI search' },
-  { command: 'verify', description: 'Verify transaction (image/PDF/text)' },
-  { command: 'summary', description: '24h/7d counts & sums' },
+  { command: 'help', description: 'Show admin console' },
+  { command: 'status', description: 'Worker health • DB & pipeline' },
+  { command: 'balance', description: 'Available & current balance • last tx' },
+  { command: 'history', description: 'Browse ledger by date (Africa/Lagos)' },
+  { command: 'search', description: 'Find transactions by name or amount' },
+  { command: 'verify', description: 'Check a receipt (photo, PDF, or text)' },
+  { command: 'summary', description: '24h / 7d totals & last transaction' },
+  { command: 'export', description: 'Download CSV for a date range' },
+  { command: 'suspicious', description: 'Show recent spoof attempts' },
+  { command: 'logs', description: 'Tail worker logs' },
 ];
 
 export async function registerMenuIfConfigured(): Promise<void> {
@@ -30,7 +33,7 @@ export async function registerMenuIfConfigured(): Promise<void> {
       const j = (await r.json().catch(() => ({}))) as { description?: string };
       logger.warn({ status: r.status, description: j.description }, 'setMyCommands failed');
     } else {
-      logger.info('setMyCommands ok — 7 commands');
+      logger.info('setMyCommands ok — 10 commands');
     }
   } catch (e) {
     logger.warn({ err: e }, 'setMyCommands error — boot continues');

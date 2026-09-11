@@ -345,8 +345,8 @@ function formatRows(
 
   const hasNext = ctx.offset + ctx.limit < ctx.total;
   const hasPrev = ctx.offset > 0;
-  const buttons: Array<Array<{ text: string; callback_data: string }>> = [];
-  const navRow: Array<{ text: string; callback_data: string }> = [];
+  const buttons: Array<Array<{ text: string; callback_data: string; style?: string }>> = [];
+  const navRow: Array<{ text: string; callback_data: string; style?: string }> = [];
   if (hasPrev) {
     const prevOff = Math.max(0, ctx.offset - ctx.limit);
     const cbFrom = ctx.from || 'recent';
@@ -361,13 +361,15 @@ function formatRows(
   if (hasNext) {
     const nextOff = ctx.offset + ctx.limit;
     if (ctx.isDefault) {
-      navRow.push({ text: 'Next 10 ➡️', callback_data: `/history 10 ${nextOff}` });
+      navRow.push({ text: 'Next 10 ➡️', callback_data: `/history 10 ${nextOff}`, style: 'primary' });
     } else {
-      navRow.push({ text: 'Next 10 ➡️', callback_data: `/history ${ctx.from} ${ctx.to} ${ctx.limit} ${nextOff}` });
+      navRow.push({ text: 'Next 10 ➡️', callback_data: `/history ${ctx.from} ${ctx.to} ${ctx.limit} ${nextOff}`, style: 'primary' });
     }
   }
   if (navRow.length) buttons.push(navRow);
+  // persistent back row
+  buttons.push([{ text: '← Back to menu', callback_data: '/help' }]);
 
-  const replyMarkup = buttons.length ? { inline_keyboard: buttons } : undefined;
+  const replyMarkup = { inline_keyboard: buttons };
   return { text, replyMarkup };
 }

@@ -36,8 +36,9 @@ export async function sendTelegramMessage(
     return;
   }
 
-  const escaped = escapeHtml(text);
-  const sliced = escaped.slice(0, 4000);
+  // Caller builds HTML and escapes dynamic values via escapeHtml already.
+  // Do NOT double-escape the whole message — that would turn <b> into &lt;b&gt; and show raw tags.
+  const sliced = text.slice(0, 4000);
   const parseMode = opts?.parseMode ?? 'HTML';
 
   const bodyBase = {
@@ -142,8 +143,7 @@ export async function sendTelegramMessageWithId(
     logger.warn({ chatId: String(chatId) }, 'sendTelegramMessageWithId skipped — no token');
     return null;
   }
-  const escaped = escapeHtml(text);
-  const sliced = escaped.slice(0, 4000);
+  const sliced = text.slice(0, 4000);
   const parseMode = opts?.parseMode ?? 'HTML';
   const url = `https://api.telegram.org/bot${token}/sendMessage`;
 
@@ -216,7 +216,7 @@ export async function editTelegramMessage(
   const token = getBotToken();
   if (!token || !messageId) return false;
   try {
-    const sliced = escapeHtml(text).slice(0, 4000);
+    const sliced = text.slice(0, 4000);
     const body: Record<string, unknown> = {
       chat_id: String(chatId),
       message_id: messageId,
@@ -269,5 +269,19 @@ export async function answerCallbackQuery(callbackQueryId: string, text?: string
     });
   } catch {
     // spinner auto-dismiss after ~30s
+  }
+}
+
+export async function sendChatAction(chatId: string | number, action: 'typing' | 'upload_document' | 'upload_photo' = 'typing'): Promise<void> {
+  const token = getBotToken();
+  if (!token || !chatId) return;
+  try {
+    await fetch(`https://api.telegram.org/bot${token}/sendChatAction`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ chat_id: String(chatId), action }),
+    });
+  } catch {
+    // best-effort, never throw
   }
 }

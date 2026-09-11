@@ -270,7 +270,7 @@ async function registerTelegramWebhookIfConfigured(): Promise<void> {
       body: JSON.stringify({
         url: webhookUrl,
         secret_token: secret,
-        allowed_updates: ['message'],
+        allowed_updates: ['message', 'callback_query'],
         max_connections: 40,
         drop_pending_updates: true,
       }),

@@ -240,6 +240,8 @@ export function renderFoundCard(row: TxRow): { text: string; replyMarkup: unknow
   const cleaned = escapeHtml(cleanedRaw);
   const dateRaw = (row.transaction_date ?? '').slice(0, 10);
   const date = escapeHtml(dateRaw);
+  const timeRaw = (row as { transaction_time?: string }).transaction_time?.slice(0, 5) ?? '';
+  const time = timeRaw ? ` <code>${escapeHtml(timeRaw)}</code>` : '';
   const desc = row.description ?? '';
   let via: string;
   if (desc.includes('NIP')) via = 'NIP';
@@ -247,13 +249,24 @@ export function renderFoundCard(row: TxRow): { text: string; replyMarkup: unknow
   else via = 'Zenith';
   const viaEsc = escapeHtml(via);
   const avail = row.available_balance ? escapeHtml(row.available_balance) : '—';
-  const text = `✅ <b>VERIFIED</b> — <code>${amt} ${curr}</code> from <code>${cleaned}</code> • <code>${date}</code> • via <b>${viaEsc}</b> • Available: <code>${avail}</code>`;
-  const replyMarkup = { inline_keyboard: [[{ text: '📜 View History', callback_data: '/history 5' }]] };
+  const text = [
+    `✅ <b>VERIFIED</b> — this credit is in the Zenith ledger`,
+    `💳 <b>Amount:</b> <code>${amt} ${curr}</code>`,
+    `👤 <b>Sender:</b> <code>${cleaned}</code>`,
+    `📅 <b>Date:</b> <code>${date}</code>${time} <i>Africa/Lagos</i> • via <b>${viaEsc}</b>`,
+    `💰 <b>Available after:</b> <code>${avail}</code>`,
+  ].join('\n');
+  const replyMarkup = {
+    inline_keyboard: [
+      [{ text: '📜 View history', callback_data: '/history 5', style: 'primary' }],
+      [{ text: '🔍 Search similar', callback_data: '/search' }, { text: '← Back to menu', callback_data: '/help' }],
+    ],
+  };
   return { text, replyMarkup };
 }
 
 export function renderNotFoundBase(): string {
-  return `❌ <b>Not found</b> — no matching Zenith transaction yet\n<i>Tip: check amount/sender/date or try /history 2026-09-01 2026-09-10</i>`;
+  return `❌ <b>Not found</b> — no matching credit for that amount + date in the ledger\n<i>Check the amount, sender, and date. Try /history with a wider range or /search.</i>`;
 }
 
 function formatFound(row: TxRow): string {

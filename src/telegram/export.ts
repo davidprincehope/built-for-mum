@@ -169,12 +169,12 @@ export async function handleExport(
     try {
       await sendTelegramDocument(chatId, csvBuffer, filename, caption);
       logger.info({ chatId: String(chatId), from, to, count: rows.length }, 'export sent via sendDocument');
-      return { text: `📄 Sent ${rows.length} rows as ${escapeHtml(filename)}` };
+      return { text: `📄 Sent ${rows.length} rows as <code>${escapeHtml(filename)}</code>\n<i>Range ${escapeHtml(from!)} → ${escapeHtml(to!)} Africa/Lagos</i>` };
     } catch (e) {
       const msg = (e as Error).message ?? String(e);
       logger.warn({ err: e, chatId: String(chatId) }, 'sendTelegramDocument failed fallback');
       // fallback to truncated inline preview if document failed? return error reply
-      return { text: `⚠️ Export failed — ${escapeHtml(msg.slice(0, 300))}` };
+      return { text: `Export failed — <code>${escapeHtml(msg.slice(0, 300))}</code>\n<i>Try again or narrow the date range.</i>` };
     }
   } catch (err) {
     logger.warn({ err }, 'handleExport DB error');
@@ -199,7 +199,10 @@ export async function handleDuplicates(): Promise<{ text: string; replyMarkup?: 
     );
     const rows = (result as { rows: Array<{ amount: string; currency: string; transaction_date: string; c: string }> }).rows ?? [];
     if (!rows || rows.length === 0) {
-      return { text: '✅ <b>Duplicates</b>\n<i>No duplicates — each amount+date unique</i>' };
+      return {
+        text: '✅ <b>Duplicates</b>\n<i>No duplicates — each amount+date unique. Every credit is distinct.</i>',
+        replyMarkup: { inline_keyboard: [[{ text: '📜 View history', callback_data: '/history 5' }], [{ text: '← Back to menu', callback_data: '/help' }]] },
+      };
     }
     const header = ` # │ Amount      │ Date       │ Count`;
     const divider = `───┼─────────────┼────────────┼──────`;
@@ -211,9 +214,9 @@ export async function handleDuplicates(): Promise<{ text: string; replyMarkup?: 
       return `${num} │ ${amt} │ ${date} │ ${cnt}`;
     });
     const table = [header, divider, ...lines].join('\n');
-    let text = `🔎 <b>Duplicates</b> <i>(top ${rows.length})</i>\n━━━━━━━━━━━━━━━━━━━━\n<pre>${escapeHtml(table)}</pre>`;
+    let text = `🔎 <b>Duplicates</b> <i>(top ${rows.length})</i>\n━━━━━━━━━━━━━━━━━━━━\n<pre>${escapeHtml(table)}</pre>\n<i>Same amount + currency + date counted &gt;1.</i>`;
     if (text.length > 4000) text = text.slice(0, 4000);
-    return { text };
+    return { text, replyMarkup: { inline_keyboard: [[{ text: '📜 View history', callback_data: '/history 5' }], [{ text: '← Back to menu', callback_data: '/help' }]] } };
   } catch (err) {
     logger.warn({ err }, 'handleDuplicates failed');
     return { text: '⚠️ Duplicates unavailable — DB error' };
@@ -298,7 +301,18 @@ export async function handleSummary(): Promise<{ text: string; replyMarkup?: unk
       `Last: ${lastLine}`,
     ].join('\n');
     if (text.length > 4000) text = text.slice(0, 4000);
-    return { text };
+    return {
+      text,
+      replyMarkup: {
+        inline_keyboard: [
+          [
+            { text: '📜 History', callback_data: '/history 5' },
+            { text: '📄 Export CSV', callback_data: '/export' },
+          ],
+          [{ text: '← Back to menu', callback_data: '/help' }],
+        ],
+      },
+    };
   } catch (err) {
     logger.warn({ err }, 'handleSummary failed');
     return { text: '⚠️ Summary unavailable — DB error' };

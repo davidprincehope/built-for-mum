@@ -49,15 +49,17 @@ async function withTimeout<T>(p: Promise<T>, ms = 5000, fallback: T): Promise<T>
 
 export function buildWelcomeReply(): { text: string; replyMarkup: unknown } {
   const text = [
-    '🤖 <b>Welcome to PaymentVerificationBot</b>',
-    '━━━━━━━━━━━━━━━━━━━━',
-    'Send <code>/login &lt;password&gt;</code> to start (24h session)',
-    '• Try <code>/help</code> for commands',
+    '🤖 <b>PaymentVerificationBot — Zenith Ledger</b>',
+    'Secure access to 999****999. Log in to verify receipts, search the ledger, and monitor the pipeline.',
+    '',
+    '🔐 <b>Log in</b> with <code>/login &lt;password&gt;</code>  •  Session lasts 24 h',
+    'Tip: your password message is deleted after a successful login.',
+    'Need a tour? Tap Help to see all commands.',
   ].join('\n');
   const replyMarkup = {
     inline_keyboard: [
-      [{ text: '🔐 Login', callback_data: '/login' }],
-      [{ text: '❓ Help', callback_data: '/help' }],
+      [{ text: '❓ Help — see commands', callback_data: '/help', style: 'primary' }],
+      [{ text: '🔐 How to log in', callback_data: '/help' }],
     ],
   };
   return { text, replyMarkup };
@@ -66,10 +68,10 @@ export function buildWelcomeReply(): { text: string; replyMarkup: unknown } {
 // --- login / logout ---
 export async function handleLogin(chatId: string, args: string[], messageId?: number): Promise<{ text: string; replyMarkup?: unknown }> {
   if (!args || args.length === 0 || !args[0]) {
-    return { text: 'Usage: /login <password>' };
+    return { text: 'Usage: <code>/login &lt;password&gt;</code>\n<i>One password for all admins — ask the owner if you need it.</i>' };
   }
   if (isRateLimited(chatId, 'login', 5, 60_000)) {
-    return { text: '⏳ Slow down — login cooling down, retry in ~60s. Tip: try again shortly' };
+    return { text: '⏳ Login cooling down — try again in ~60s.\n<i>5 tries per minute to protect the account.</i>' };
   }
   const password = args[0];
   const botPassword = process.env.TELEGRAM_BOT_PASSWORD ?? '';
@@ -86,16 +88,30 @@ export async function handleLogin(chatId: string, args: string[], messageId?: nu
         deleteTelegramMessage(chatId, messageId).catch(() => {});
       } catch {}
     }
-    return { text: '✅ Logged in for 24h • Try /balance, /history, /verify, /search' };
+    return {
+      text: '✅ Logged in for 24h — session active\nTry <code>/balance</code>, <code>/history</code>, <code>/verify</code>, or <code>/search</code>.',
+      replyMarkup: {
+        inline_keyboard: [
+          [
+            { text: '💰 View balance', callback_data: '/balance', style: 'primary' },
+            { text: '📜 Recent history', callback_data: '/history' },
+          ],
+          [{ text: '❓ Help', callback_data: '/help' }],
+        ],
+      },
+    };
   }
   logger.warn({ chatId }, 'telegram login failed — wrong password');
-  return { text: '❌ Wrong password' };
+  return { text: '❌ Wrong password — check and try <code>/login &lt;password&gt;</code> again.' };
 }
 
-export async function handleLogout(chatId: string): Promise<{ text: string }> {
+export async function handleLogout(chatId: string): Promise<{ text: string; replyMarkup?: unknown }> {
   const { logout } = await import('./session');
   logout(chatId);
-  return { text: '👋 Logged out' };
+  return {
+    text: '👋 <b>Logged out</b>\nYour 24 h session ended. Use <code>/login &lt;password&gt;</code> to sign in again.',
+    replyMarkup: { inline_keyboard: [[{ text: '🔐 Log in again', callback_data: '/help' }]] },
+  };
 }
 
 // --- verify / search with rate-limit tuning per D-14 ---
@@ -166,66 +182,62 @@ export async function handleSearchStub(chatId: string, args: string[]): Promise<
   }
 }
 
-// --- help with professional UI and inline keyboard ---
-
+// --- help — clean HTML, one link, no italic noise, one primary ---
 export function buildHelpReply(): { text: string; replyMarkup?: unknown } {
   const text = [
     '🤖 <b>PaymentVerificationBot — Admin Console</b>',
+    'CREDIT-only ledger • 999****999 • Africa/Lagos',
     '━━━━━━━━━━━━━━━━━━━━',
     '',
-    '🔐 <b>Auth</b>',
-    '  /login &lt;password&gt;  —  Login for 24h session',
-    '  /logout  —  End session',
-    '',
-    '📊 <b>Monitoring</b>',
-    '  /status  —  Worker health, DB & pipeline state',
-    '  /health  —  Alias for /status',
-    '  /logs <i>[n] [level]</i>  —  Tail worker logs <code>(20 warn)</code>',
+    '🔐 <b>Access</b>',
+    '  <code>/login &lt;password&gt;</code> — sign in (24h session)',
+    '  <code>/logout</code> — end session',
     '',
     '💳 <b>Ledger</b>',
-    '  /balance  —  Available & current + last TX',
-    '  /history <i>[from to]</i>  —  Range Lagos DD/MM/YYYY or YYYY-MM-DD capped 50',
-    '  /search <i>query</i>  —  Full-text AI search e.g. last week large transfers',
-    '  /verify <i>[text]</i> + image/PDF  —  Verify transaction',
-    '  /suspicious <i>[n]</i>  —  Last <i>n</i> spoofs <code>(5)</code>',
+    '  <code>/balance</code> — available & current + last transaction',
+    '  <code>/history [from to]</code> — list by date (DD/MM/YYYY or YYYY-MM-DD)',
+    '  <code>/search &lt;query&gt;</code> — find by name or amount',
+    '  <code>/verify</code> + photo/PDF or <code>/verify 100k 2026-09-09 SAMPLE SENDER</code>',
+    '',
+    '📊 <b>Monitoring</b>',
+    '  <code>/status</code> — worker, DB & Gmail pipeline',
+    '  <code>/logs [n] [level]</code> — tail logs (e.g. 20 warn)',
+    '  <code>/suspicious [n]</code> — recent spoof attempts',
     '',
     '📈 <b>Analytics</b>',
-    '  /summary  —  24h/7d counts & sums + last TX Africa/Lagos',
-    '  /export <i>[from to]</i>  —  CSV via document',
-    '  /duplicates  —  Hunt duplicates GROUP BY amount, date HAVING COUNT>1',
+    '  <code>/summary</code> — 24h / 7d counts & sums',
+    '  <code>/export [from to]</code> — CSV as document',
+    '  <code>/duplicates</code> — same amount + date counted &gt;1',
     '',
-    '⚡ <b>Ops</b>',
-    '  /poll    —  Trigger Gmail poll <i>(30s cooldown)</i>',
-    '  /watch   —  Re-register Gmail watch <i>(60s cooldown)</i>',
-    '  /logout  —  End 24h session',
+    '⚡ <b>Ops</b> (rate-limited)',
+    '  <code>/poll</code> — pull Gmail now',
+    '  <code>/watch</code> — re-register push',
     '',
-    '💡 <i>Examples:</i> <code>/login secret</code>  <code>/balance</code>  <code>/history 01/09/2026 10/09/2026</code>  <code>/search SAMPLE SENDER 100k</code>  <code>/export 2026-09-01 2026-09-10</code>',
+    'Examples: <code>/login secret</code>  <code>/balance</code>  <code>/history 01/09/2026 10/09/2026</code>',
     '',
-    '🔗 <a href="https://example.com/health">Health endpoint</a> • <code>Africa/Lagos</code>',
+    'Health: <code>example.com/health</code> • Africa/Lagos',
   ].join('\n');
 
   const replyMarkup = {
     inline_keyboard: [
-      [
-        { text: '📊 Status', callback_data: '/status' },
-        { text: '💰 Balance', callback_data: '/balance' },
-      ],
+      [{ text: '💰 View balance', callback_data: '/balance', style: 'primary' }],
       [
         { text: '📜 History', callback_data: '/history' },
         { text: '🔍 Search', callback_data: '/search' },
       ],
       [
-        { text: '📊 Summary', callback_data: '/summary' },
-        { text: '📄 Export', callback_data: '/export' },
+        { text: '📊 Status', callback_data: '/status' },
+        { text: '📋 Logs', callback_data: '/logs 20' },
       ],
       [
-        { text: '🔎 Duplicates', callback_data: '/duplicates' },
-        { text: '📋 Logs', callback_data: '/logs' },
+        { text: '📈 Summary', callback_data: '/summary' },
+        { text: '📄 Export CSV', callback_data: '/export' },
       ],
       [
-        { text: '⚡ Poll', callback_data: '/poll' },
-        { text: '🔄 Watch', callback_data: '/watch' },
+        { text: '⚡ Poll now', callback_data: '/poll' },
+        { text: '🔄 Re-register watch', callback_data: '/watch' },
       ],
+      [{ text: '🚪 Log out', callback_data: '/logout', style: 'danger' }],
     ],
   };
 
@@ -303,33 +315,33 @@ export async function buildStatusReply(): Promise<{ text: string; replyMarkup?: 
   const dbEmoji = Number(txCount) > 0 ? '🟢' : '⚪';
 
   const text = [
-    `${statusEmoji} <b>Worker Status</b>  <i>up ${escapeHtml(uptime)}</i>`,
+    `${statusEmoji} <b>Worker Status</b>  •  <i>up ${escapeHtml(uptime)}</i>`,
     '━━━━━━━━━━━━━━━━━━━━',
-    '',
     `${staleEmoji} <b>Pipeline:</b> ${escapeHtml(staleLabel)}  <code>${escapeHtml(staleStr)}</code>`,
-    `⏰ <b>Last TX:</b> ${lastTxLine}`,
+    `⏰ <b>Last transaction:</b> ${lastTxLine}`,
     '',
     `${dbEmoji} <b>Database</b>`,
-    `  • <b>Transactions:</b> <code>${escapeHtml(String(txCount))}</code>  • <b>Suspicious:</b> <code>${escapeHtml(String(susCount))}</code>`,
-    `  • <b>History ID:</b> ${historySlice}`,
+    `  • Transactions: <code>${escapeHtml(String(txCount))}</code>  • Suspicious: <code>${escapeHtml(String(susCount))}</code>`,
+    `  • History ID: ${historySlice}`,
     '',
-    `📡 <b>Gmail</b>`,
-    `  • <b>Watch expires:</b> ${watchLine}`,
-    `  • <b>Poll after:</b> <code>${escapeHtml(pollAfterStr)}</code> <i>Africa/Lagos</i>`,
+    `📡 <b>Gmail push & poll</b>`,
+    `  • Watch expires: ${watchLine}`,
+    `  • Poll after: <code>${escapeHtml(pollAfterStr)}</code> <i>Africa/Lagos</i>`,
     '',
-    `🔗 <a href="https://example.com/health">Health</a> • <code>Africa/Lagos 07:00–21:00</code>`,
+    `🔗 <a href="https://example.com/health">Health endpoint</a> • Monitoring window 07:00–21:00 Africa/Lagos`,
   ].join('\n');
 
   const replyMarkup = {
     inline_keyboard: [
       [
-        { text: '🔄 Refresh', callback_data: '/status' },
-        { text: '📜 History 5', callback_data: '/history 5' },
+        { text: '🔄 Refresh status', callback_data: '/status', style: 'primary' },
+        { text: '📜 Recent history', callback_data: '/history 5' },
       ],
       [
-        { text: '📋 Logs', callback_data: '/logs 20' },
+        { text: '📋 View logs', callback_data: '/logs 20' },
         { text: '⚡ Poll now', callback_data: '/poll' },
       ],
+      [{ text: '← Back to menu', callback_data: '/help' }],
     ],
   };
 
@@ -364,10 +376,13 @@ export async function handleHistory(rawLimit: number | string | undefined): Prom
     const rows = (result as { rows: Array<{ amount: string; currency: string; transaction_reference: string; transaction_date: string; sender_name: string }> }).rows;
 
     if (!rows || rows.length === 0) {
-      return { text: '📭 <b>History</b>\n<i>No transactions yet</i>\n\nSend a Zenith credit to <code>999****999</code> to see it here.', replyMarkup: undefined };
+      return {
+        text: '📭 <b>History — no transactions yet</b>\n<i>Credits to 999****999 will appear here once Gmail delivers them.</i>\nTry <code>/status</code> to check the pipeline.',
+        replyMarkup: { inline_keyboard: [[{ text: '📊 Check status', callback_data: '/status' }], [{ text: '← Back to menu', callback_data: '/help' }]] },
+      };
     }
 
-    // Build professional table with monospace pre block
+    // Build table with monospace pre block — keep sender 18-char truncate for test stability
     const header = ` # │ Amount      │ Sender`;
     const divider = `───┼─────────────┼──────────────────`;
     const lines = rows.map((r, i) => {
@@ -393,8 +408,9 @@ export async function handleHistory(rawLimit: number | string | undefined): Prom
       inline_keyboard: [
         [
           { text: '🔄 Refresh', callback_data: `/history ${n}` },
-          { text: n < 10 ? '📜 Show 10' : '📜 Show 5', callback_data: n < 10 ? '/history 10' : '/history 5' },
+          { text: n < 10 ? '📜 Show 10' : '📜 Show 5', callback_data: n < 10 ? '/history 10' : '/history 5', style: n < 10 ? 'primary' : undefined },
         ],
+        [{ text: '🔍 Search instead', callback_data: '/search' }, { text: '← Back to menu', callback_data: '/help' }],
       ],
     };
 
@@ -431,7 +447,10 @@ export async function handleSuspicious(rawLimit: number | string | undefined): P
     const rows = (result2 as { rows: Array<{ from_address: string; reason: string; subject: string | null }> }).rows;
 
     if (!rows || rows.length === 0) {
-      return { text: '✅ <b>Suspicious</b>\n<i>No spoof attempts — all Zenith mails passed DKIM ✅</i>' };
+      return {
+        text: '✅ <b>Suspicious — all clear</b>\n<i>No spoof attempts. Every Zenith mail passed sender + DKIM checks.</i>',
+        replyMarkup: { inline_keyboard: [[{ text: '← Back to menu', callback_data: '/help' }]] },
+      };
     }
 
     const lines = rows.map((r, i) => {
@@ -442,14 +461,14 @@ export async function handleSuspicious(rawLimit: number | string | undefined): P
     });
 
     const text = [
-      `🚨 <b>Suspicious Emails</b> <i>(last ${rows.length})</i>`,
+      `🚨 <b>Suspicious emails</b> <i>(last ${rows.length})</i>`,
       '━━━━━━━━━━━━━━━━━━━━',
       ...lines,
     ].join('\n');
 
     let out = text;
     if (out.length > 3800) out = out.slice(0, 3750) + '\n… truncated';
-    return { text: out };
+    return { text: out, replyMarkup: { inline_keyboard: [[{ text: '📊 Status', callback_data: '/status' }], [{ text: '← Back to menu', callback_data: '/help' }]] } };
   } catch (err) {
     logger.warn({ err }, 'handleSuspicious failed');
     return { text: '⚠️ <b>Suspicious unavailable</b>\n<i>DB error</i>' };
@@ -501,7 +520,10 @@ export function handleLogs(rawN: number | string | undefined, rawLevel: string |
   let out = text;
   if (out.length > 3800) out = out.slice(0, 3750) + '\n… truncated';
   const replyMarkup = {
-    inline_keyboard: [[{ text: '🔄 Refresh logs', callback_data: `/logs ${n}${level ? ' ' + level : ''}` }]],
+    inline_keyboard: [
+      [{ text: '🔄 Refresh logs', callback_data: `/logs ${n}${level ? ' ' + level : ''}`, style: 'primary' }],
+      [{ text: '← Back to menu', callback_data: '/help' }],
+    ],
   };
   return { text: out, replyMarkup };
 }
@@ -510,13 +532,13 @@ export function handleLogs(rawN: number | string | undefined, rawLevel: string |
 
 export async function handlePollTrigger(chatId: string): Promise<{ text: string; replyMarkup?: unknown }> {
   if (isRateLimited(chatId, 'poll', 1, 30_000)) {
-    return { text: '⏳ <b>Slow down — poll cooling down</b>\n<i>Retry in ~30s. Tip: protects Gmail quota (250 qps)</i>' };
+    return { text: '⏳ Poll on cooldown — retry in ~30s.\n<i>Protects the Gmail quota (250 q/s).</i>' };
   }
 
   try {
     const { _isPollRunningForTests } = await import('../gmail/poll');
     if (_isPollRunningForTests()) {
-      return { text: '⏳ <b>Poll already running</b>\n<i>Try again shortly</i>' };
+      return { text: '⏳ <b>Poll already running</b>\n<i>I’ll report when it finishes — try refreshing status.</i>', replyMarkup: { inline_keyboard: [[{ text: '📊 View status', callback_data: '/status' }]] } };
     }
   } catch {}
 
@@ -525,19 +547,29 @@ export async function handlePollTrigger(chatId: string): Promise<{ text: string;
       const { pollSweep } = await import('../gmail/poll');
       const result = await pollSweep();
       const count = (result as unknown as { totalProcessed?: number })?.totalProcessed ?? 0;
-      await sendTelegramMessage(chatId, `✅ <b>Poll done</b>\n<i>Processed ${count} message(s)</i> • <code>${new Date().toLocaleString('en-GB', { timeZone: 'Africa/Lagos' })}</code>`, { replyMarkup: { inline_keyboard: [[{ text: '📜 History', callback_data: '/history 5' }]] } });
+      await sendTelegramMessage(chatId, `✅ <b>Poll done</b>\nProcessed <code>${count}</code> message(s) • <code>${new Date().toLocaleString('en-GB', { timeZone: 'Africa/Lagos' })}</code>`, {
+        replyMarkup: {
+          inline_keyboard: [
+            [{ text: '📜 View history', callback_data: '/history 5', style: 'primary' }],
+            [{ text: '📊 Status', callback_data: '/status' }],
+          ],
+        },
+      });
     } catch (err) {
       const msg = (err as Error).message ?? String(err);
-      await sendTelegramMessage(chatId, `⚠️ <b>Poll failed</b>\n<code>${escapeHtml(msg.slice(0, 300))}</code>`);
+      await sendTelegramMessage(chatId, `Poll failed — <code>${escapeHtml(msg.slice(0, 300))}</code>\n<i>Try /poll again or check /logs.</i>`);
     }
   });
 
-  return { text: '⏳ <b>Poll sweep started</b>\n<i>I’ll report back in a moment…</i>\n<code>q:(from:zenithbank.com) after:cursor</code>' };
+  return {
+    text: '⏳ <b>Polling Gmail</b>\n<i>Checking for new Zenith credits… I’ll message you when it’s done.</i>\n<code>q:(from:zenithbank.com) after:cursor</code>',
+    replyMarkup: { inline_keyboard: [[{ text: '📊 View status', callback_data: '/status' }]] },
+  };
 }
 
 export async function handleWatchTrigger(chatId: string): Promise<{ text: string; replyMarkup?: unknown }> {
   if (isRateLimited(chatId, 'watch', 1, 60_000)) {
-    return { text: '⏳ <b>Slow down — watch cooling down</b>\n<i>Retry in ~60s. Tip: try again shortly</i>' };
+    return { text: '⏳ Watch on cooldown — retry in ~60s.\n<i>Re-registering too often wastes quota.</i>' };
   }
 
   setImmediate(async () => {
@@ -546,14 +578,19 @@ export async function handleWatchTrigger(chatId: string): Promise<{ text: string
       const result = await registerWatch();
       const hid = result.historyId ? result.historyId.slice(0, 12) + '…' : 'none';
       const exp = result.expiration ? new Date(Number(result.expiration)).toLocaleString('en-GB', { timeZone: 'Africa/Lagos' }) : 'unknown';
-      await sendTelegramMessage(chatId, `✅ <b>Watch registered</b>\n• <b>History ID:</b> <code>${escapeHtml(hid)}</code>\n• <b>Expires:</b> <code>${escapeHtml(exp)}</code> <i>Africa/Lagos</i>\n• <b>Topic:</b> <code>projects/example-project/topics/gmail-zenith-notifications</code>`, { replyMarkup: { inline_keyboard: [[{ text: '📊 Status', callback_data: '/status' }]] } });
+      await sendTelegramMessage(chatId, `✅ <b>Watch registered</b>\n• History ID: <code>${escapeHtml(hid)}</code>\n• Expires: <code>${escapeHtml(exp)}</code> <i>Africa/Lagos</i>\n• Topic: <code>projects/example-project/topics/gmail-zenith-notifications</code>`, {
+        replyMarkup: { inline_keyboard: [[{ text: '📊 View status', callback_data: '/status', style: 'primary' }]] },
+      });
     } catch (err) {
       const msg = (err as Error).message ?? String(err);
-      await sendTelegramMessage(chatId, `⚠️ <b>Watch failed</b>\n<code>${escapeHtml(msg.slice(0, 300))}</code>`);
+      await sendTelegramMessage(chatId, `Watch failed — <code>${escapeHtml(msg.slice(0, 300))}</code>\n<i>Try /watch again or check /logs.</i>`);
     }
   });
 
-  return { text: '⏳ <b>Watch registration started</b>\n<i>I’ll report back…</i>\n<code>projects/example-project/topics/gmail-zenith-notifications</code>' };
+  return {
+    text: '⏳ <b>Re-registering Gmail watch</b>\n<i>Setting up push notifications… I’ll confirm when it’s done.</i>',
+    replyMarkup: { inline_keyboard: [[{ text: '📊 View status', callback_data: '/status' }]] },
+  };
 }
 
 // --- dispatch ---
@@ -642,12 +679,21 @@ export async function handleTelegramUpdate(update: unknown): Promise<{ text: str
         chat?: { id?: number | string };
         from?: { id?: number | string };
       };
-      callback_query?: { data?: string; message?: { chat?: { id?: number | string } }; from?: { id?: number | string } };
+      callback_query?: { id?: string; data?: string; message?: { chat?: { id?: number | string } }; from?: { id?: number | string } };
     };
-    // Handle callback queries from inline keyboards
+    // Handle callback queries from inline keyboards — always ack the spinner first
     if (u?.callback_query?.data) {
       const data = u.callback_query.data.trim();
       const chatId = String((u.callback_query.message?.chat?.id ?? u.callback_query.from?.id ?? '') as string | number);
+      const cqId = (u.callback_query as { id?: string }).id;
+      if (cqId) {
+        try {
+          const { answerCallbackQuery, sendChatAction } = await import('./sendMessage');
+          await answerCallbackQuery(cqId);
+          // show typing while we process the tap (handler may hit DB/OpenRouter)
+          void sendChatAction(chatId, 'typing');
+        } catch {}
+      }
       if (!chatId) return null;
       const { cmd, args } = parseCommandText(data);
       if (!cmd) return null;
@@ -704,6 +750,10 @@ export async function handleTelegramUpdate(update: unknown): Promise<{ text: str
         }
         // If caption empty and isPdf false and photo, allow verify with no caption (will hit vision)
         try {
+          const { sendChatAction } = await import('./sendMessage');
+          void sendChatAction(chatId, 'typing');
+        } catch {}
+        try {
           const { handleVerify } = await import('./verify');
           const reply = await handleVerify({
             chatId,
@@ -757,6 +807,13 @@ export async function handleTelegramUpdate(update: unknown): Promise<{ text: str
     if (!h) return `Unknown command /${escapeHtml(cmd)}. Try /help`;
     const chatId = String((u.message!.chat?.id ?? u.message!.from?.id ?? '') as string | number);
     if (!chatId) return null;
+    // show typing for DB-bound commands
+    if (['status', 'health', 'balance', 'history', 'search', 'summary', 'export', 'duplicates', 'suspicious', 'logs', 'verify', 'poll', 'watch'].includes(cmd)) {
+      try {
+        const { sendChatAction } = await import('./sendMessage');
+        void sendChatAction(chatId, 'typing');
+      } catch {}
+    }
     // Forward message_id for /login delete path
     if (cmd === 'login') {
       const mid = (u.message as { message_id?: number })?.message_id;

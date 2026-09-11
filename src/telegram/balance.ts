@@ -49,7 +49,10 @@ export async function buildBalanceReply(): Promise<{ text: string; replyMarkup?:
     );
     const rows = (result as { rows?: Array<Record<string, string | null>> }).rows ?? [];
     if (!rows || rows.length === 0) {
-      return { text: '📭 <b>Balance</b>\n<i>No transactions yet</i>\n\nSend a Zenith credit to <code>999****999</code> to see it here.' };
+      return {
+        text: '📭 <b>Balance</b>\n<i>No transactions yet</i>\nCredits to 999****999 will appear here once delivered. Use <code>/status</code> to check the pipeline.',
+        replyMarkup: { inline_keyboard: [[{ text: '📊 Check status', callback_data: '/status' }], [{ text: '← Back to menu', callback_data: '/help' }]] },
+      };
     }
     const r = rows[0] as Record<string, string | null>;
     const availRaw = r.available_balance;
@@ -83,8 +86,12 @@ export async function buildBalanceReply(): Promise<{ text: string; replyMarkup?:
     const replyMarkup = {
       inline_keyboard: [
         [
+          { text: '🔄 Refresh balance', callback_data: '/balance', style: 'primary' },
           { text: '📜 History', callback_data: '/history' },
-          { text: '🔄 Refresh', callback_data: '/balance' },
+        ],
+        [
+          { text: '🔍 Search', callback_data: '/search' },
+          { text: '← Back to menu', callback_data: '/help' },
         ],
       ],
     };
