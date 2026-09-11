@@ -794,8 +794,8 @@ export async function handleTelegramUpdate(update: unknown): Promise<{ text: str
           const { isLoggedIn } = await import('./session');
           const loggedIn = isLoggedIn(slashlessChatId);
           if (!loggedIn) {
-            // Unauth slash-less still gets Welcome (08-03 auto-prompt supersedes later)
-            return buildWelcomeReply();
+            // Unauth slash-less: let worker's Welcome path handle uniformly (return null here per 08-02 task3)
+            return null;
           }
           // Explicit slash-less prefixes have priority
           if (/^search\s+/i.test(text)) {
