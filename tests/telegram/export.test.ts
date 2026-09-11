@@ -181,7 +181,7 @@ describe('telegram export — CSV sendDocument, duplicates, summary', () => {
     const { handleDuplicates } = await import('../../src/telegram/export');
     let res = await handleDuplicates();
     expect(res.text).toContain('Duplicates');
-    expect(res.text).toContain('100000');
+    expect(res.text).toContain('₦100,000.00');
     expect(res.text).toContain('3');
     expect(res.text.length).toBeLessThan(4096);
     // no duplicates
@@ -213,10 +213,10 @@ describe('telegram export — CSV sendDocument, duplicates, summary', () => {
     const res = await handleSummary();
     expect(res.text).toContain('24h:');
     expect(res.text).toContain('2');
-    expect(res.text).toContain('150000');
+    expect(res.text).toContain('₦150,000.00');
     expect(res.text).toContain('7d:');
     expect(res.text).toContain('5');
-    expect(res.text).toContain('500000');
+    expect(res.text).toContain('₦500,000.00');
     expect(res.text).toContain('Total:');
     expect(res.text).toContain('36');
     expect(res.text).toContain('Africa/Lagos');

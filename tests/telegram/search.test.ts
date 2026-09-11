@@ -125,7 +125,7 @@ describe('telegram search — openRouter intent + parameterized GIN SQL + pagina
     expect(res.text).toContain('Found 1 matching');
     expect(res.text.length).toBeLessThan(4096);
     // Verify parameterized SQL uses $ placeholders not interpolation
-    const selectSql = capture.sqls.find((s) => s.includes('FROM transactions') && s.includes('LIMIT 10 OFFSET'))!;
+    const selectSql = capture.sqls.find((s) => s.includes('FROM transactions') && s.includes('LIMIT 5 OFFSET'))!;
     expect(selectSql).toBeDefined();
     expect(selectSql).toContain('$1::text');
     expect(selectSql).toContain('$2::numeric');
@@ -143,7 +143,7 @@ describe('telegram search — openRouter intent + parameterized GIN SQL + pagina
   it('handleSearch escapes HTML and slices 4000', async () => {
     delete process.env.OPENROUTER_API_KEY;
     const rows = [
-      { amount: '100.00', currency: 'NGN', transaction_date: '2026-09-10', transaction_time: '10:00:00', sender_name: '<b>evil</b>', description: '<script>', available_balance: '100', branch: null },
+      { amount: '100.00', currency: 'NGN', transaction_date: '2026-09-10', transaction_time: '10:00:00', sender_name: '<b>evil</b>', description: 'NIP/FCMB/<b>evil</b>/Transfer', available_balance: '100', branch: null },
     ];
     _setPoolForTests(mockPoolForSearch({ count: '1', rows }));
     const { handleSearch } = await import('../../src/telegram/search');
@@ -174,10 +174,10 @@ describe('telegram search — openRouter intent + parameterized GIN SQL + pagina
     const nextBtn = kb.flat().find((b) => b.text.includes('Next'));
     expect(nextBtn).toBeDefined();
     expect(nextBtn!.callback_data).toContain('/search');
-    expect(nextBtn!.callback_data).toContain('10'); // next offset
-    // offset 10 next page
+    expect(nextBtn!.callback_data).toContain('5'); // next offset (5 per page)
+    // offset 5 next page
     _setPoolForTests(mockPoolForSearch({ count: '23', rows }));
-    const res2 = await handleSearch('last week large transfers', { offset: 10 });
+    const res2 = await handleSearch('last week large transfers', { offset: 5 });
     const kb2 = (res2.replyMarkup as { inline_keyboard: Array<Array<{ text: string; callback_data: string }>> }).inline_keyboard;
     const prevBtn = kb2.flat().find((b) => b.text.includes('Prev'));
     expect(prevBtn).toBeDefined();

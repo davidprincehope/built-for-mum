@@ -47,9 +47,9 @@ describe('telegram balance — buildBalanceReply', () => {
     const { buildBalanceReply } = await import('../../src/telegram/balance');
     const res = await buildBalanceReply();
     expect(res.text).toContain('Available:');
-    expect(res.text).toContain('319599.78');
+    expect(res.text).toContain('₦319,599.78');
     expect(res.text).toContain('Current:');
-    expect(res.text).toContain('100.00 NGN');
+    expect(res.text).toContain('₦100.00');
     expect(res.text).toContain('EXAMPLE MERCHANT');
     expect(res.text).toContain('2026-09-10');
     _setPoolForTests(null);

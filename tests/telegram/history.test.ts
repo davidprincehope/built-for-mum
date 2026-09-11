@@ -127,7 +127,7 @@ describe('telegram history — parseLagosDateRange and handleHistoryWithRange', 
   });
 
   it('provides inline Next pagination when total > limit', async () => {
-    const rows = Array.from({ length: 10 }, (_, i) => ({
+    const rows = Array.from({ length: 5 }, (_, i) => ({
       amount: '10.00',
       currency: 'NGN',
       transaction_date: '2026-09-05',
@@ -139,12 +139,12 @@ describe('telegram history — parseLagosDateRange and handleHistoryWithRange', 
     }));
     _setPoolForTests(mockPoolForHistory({ count: '25', rows }));
     const { handleHistoryWithRange } = await import('../../src/telegram/history');
-    const res = await handleHistoryWithRange(['2026-09-01', '2026-09-10'], { limit: 10, offset: 0 });
+    const res = await handleHistoryWithRange(['2026-09-01', '2026-09-10'], { limit: 5, offset: 0 });
     expect(res.replyMarkup).toBeDefined();
     const kb = (res.replyMarkup as { inline_keyboard: Array<Array<{ text: string; callback_data: string }>> }).inline_keyboard;
     const nextBtn = kb.flat().find((b) => b.text.includes('Next'));
     expect(nextBtn).toBeDefined();
-    expect(nextBtn!.callback_data).toContain('/history 2026-09-01 2026-09-10 10 10');
+    expect(nextBtn!.callback_data).toContain('/history 2026-09-01 2026-09-10 5 5');
     _setPoolForTests(null);
   });
 
@@ -164,8 +164,8 @@ describe('telegram history — parseLagosDateRange and handleHistoryWithRange', 
     ];
     _setPoolForTests(mockPoolForHistory({ count: '20', rows, capture }));
     const { handleHistoryWithRange } = await import('../../src/telegram/history');
-    const res = await handleHistoryWithRange(['2026-09-01', '2026-09-10', '10', '10']);
-    expect(capture.params.some((p) => p[3] === 10)).toBe(true);
+    const res = await handleHistoryWithRange(['2026-09-01', '2026-09-10', '5', '5']);
+    expect(capture.params.some((p) => p[3] === 5)).toBe(true);
     expect(res.text).toBeDefined();
     _setPoolForTests(null);
   });
