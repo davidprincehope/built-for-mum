@@ -10,7 +10,7 @@ import { parseCommandText } from './webhook';
 import { formatNaira } from './naira';
 
 // D-06 Ask-with-button gate: short hash map TTL 5min
-export const pendingVerify = new Map<string, { fileId: string; mime?: string; isPdf: boolean; chatId: string; ts: number }>();
+export const pendingVerify = new Map<string, { fileId: string; mime?: string; isPdf: boolean; chatId: string; ts: number; caption?: string }>();
 export function _resetPendingVerifyForTests(): void { pendingVerify.clear(); }
 
 // --- helpers ---
@@ -64,11 +64,54 @@ export function buildWelcomeReply(): { text: string; replyMarkup: unknown } {
   ].join('\n');
   const replyMarkup = {
     inline_keyboard: [
+      [{ text: '🔐 Log in', callback_data: '/login' }],
       [{ text: '❓ Help — see commands', callback_data: '/help', style: 'primary' }],
-      [{ text: '🔐 How to log in', callback_data: '/help' }],
     ],
   };
   return { text, replyMarkup };
+}
+
+export function buildLoginForceReplyPrompt(): { text: string; replyMarkup: unknown } {
+  return {
+    text: '🔐 <b>Send password</b> (hidden)\n<i>Reply to this message with your password — it will be deleted after verification.</i>',
+    replyMarkup: { force_reply: true, selective: true, input_field_placeholder: 'Password…' },
+  };
+}
+
+export async function handleForceReplyPassword(
+  chatId: string,
+  text: string,
+  messageId: number,
+  replyToText?: string,
+  promptMessageId?: number,
+): Promise<{ text: string; replyMarkup?: unknown } | null> {
+  if (!replyToText || !replyToText.includes('Send password')) return null;
+  if (isRateLimited(chatId, 'login', 5, 60_000)) {
+    return { text: '⏳ Login cooling down — try again in ~60s.\n<i>5 tries per minute to protect the account.</i>' };
+  }
+  const password = text.trim();
+  if (!password) return { text: '❌ Wrong password — tap Login to try again.' };
+  const { login } = await import('./session');
+  const ok = login(chatId, password);
+  if (ok) {
+    logger.info({ chatId }, 'telegram login via force_reply success');
+    try {
+      const { deleteTelegramMessage } = await import('./sendMessage');
+      deleteTelegramMessage(chatId, messageId).catch(() => {});
+      if (promptMessageId) deleteTelegramMessage(chatId, promptMessageId).catch(() => {});
+    } catch {}
+    return {
+      text: '✅ Logged in for 24h — session active\nTry <code>/balance</code>, <code>/history</code>, <code>/verify</code>, or just type <code>search SAMPLE SENDER 100k</code>.',
+      replyMarkup: {
+        inline_keyboard: [
+          [{ text: '💰 View balance', callback_data: '/balance' }],
+          [{ text: '🔍 Search', callback_data: '/search' }],
+        ],
+      },
+    };
+  }
+  logger.warn({ chatId }, 'telegram login via force_reply failed — wrong password');
+  return { text: '❌ Wrong password — tap Login to try again.' };
 }
 
 // --- login / logout ---
@@ -726,7 +769,7 @@ export async function handleTelegramUpdate(update: unknown): Promise<{ text: str
           if (isRateLimited(chatId, 'verify', 5, 60_000)) return '⏳ Slow down — Verify cooling down, retry in ~30s. Tip: try again shortly';
           try {
             const { handleVerify } = await import('./verify');
-            const reply = await handleVerify({ chatId, fileId: entry.fileId, mime: entry.mime, isPdf: entry.isPdf });
+            const reply = await handleVerify({ chatId, fileId: entry.fileId, mime: entry.mime, isPdf: entry.isPdf, caption: entry.caption });
             if (typeof reply === 'string') return reply;
             return reply as { text: string; replyMarkup?: unknown };
           } catch (e) {
@@ -801,9 +844,15 @@ export async function handleTelegramUpdate(update: unknown): Promise<{ text: str
       }
 
       if (fileId) {
-        // D-06 gate: never auto-verify — ask with button, store under short hash TTL 5min
+        // D-06 gate: never auto-verify — ask with button, store under short hash TTL 5min, preserve caption for verify:yes
+        const captionRaw = (msg as { caption?: string }).caption?.trim() ?? '';
+        let captionForStore: string | undefined = captionRaw || undefined;
+        if (captionForStore && captionForStore.startsWith('/verify')) {
+          const { args } = parseCommandText(captionForStore);
+          captionForStore = args.join(' ') || undefined;
+        }
         const shortKey = createHash('sha256').update(fileId).digest('hex').slice(0, 12);
-        pendingVerify.set(shortKey, { fileId, mime, isPdf, chatId, ts: Date.now() });
+        pendingVerify.set(shortKey, { fileId, mime, isPdf, chatId, ts: Date.now(), caption: captionForStore });
         setTimeout(() => pendingVerify.delete(shortKey), 5 * 60 * 1000).unref();
         try {
           const { sendChatAction } = await import('./sendMessage');

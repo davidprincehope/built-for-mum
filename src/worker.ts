@@ -328,15 +328,51 @@ function createHttpServer(): import('http').Server {
           return;
         }
 
-        // Session gate: if TELEGRAM_BOT_PASSWORD set, require login except for login/help/start; else fallback to legacy allowlist
-        const botPassword = process.env.TELEGRAM_BOT_PASSWORD ?? '';
-        const bodyAnyEarly = body as { message?: { text?: string }; callback_query?: { data?: string } };
+        // D-08 force_reply password reply intercept — before session gate so password not treated as search
+        const bodyAnyEarly = body as {
+          message?: { text?: string; message_id?: number; reply_to_message?: { text?: string; message_id?: number } };
+          callback_query?: { data?: string };
+        };
         const rawTextEarly: string = bodyAnyEarly?.message?.text ?? bodyAnyEarly?.callback_query?.data ?? '';
         const { cmd: earlyCmd } = parseCommandText(rawTextEarly);
         const publicCmds = new Set(['login', 'help', 'start']);
+        const botPassword = process.env.TELEGRAM_BOT_PASSWORD ?? '';
+        // force_reply password path: text reply to "Send password" prompt while not logged in
+        const forceReplyText = bodyAnyEarly?.message?.text;
+        const forceReplyTo = bodyAnyEarly?.message?.reply_to_message?.text;
+        const forceReplyMid = bodyAnyEarly?.message?.message_id;
+        const forcePromptMid = bodyAnyEarly?.message?.reply_to_message?.message_id;
+        if (botPassword && forceReplyText && forceReplyTo && forceReplyTo.includes('Send password')) {
+          try {
+            const { isLoggedIn } = await import('./telegram/session');
+            if (!isLoggedIn(chatId)) {
+              const { handleForceReplyPassword } = await import('./telegram/commands');
+              const result = await handleForceReplyPassword(chatId, forceReplyText, forceReplyMid ?? 0, forceReplyTo, forcePromptMid);
+              if (result) {
+                res.statusCode = 200;
+                res.end('OK');
+                try { await sendTelegramMessage(chatId, result.text, { replyMarkup: result.replyMarkup }); } catch {}
+                return;
+              }
+            }
+          } catch {}
+        }
+        // Session gate: if TELEGRAM_BOT_PASSWORD set, require login except for login/help/start; else fallback to legacy allowlist
         if (botPassword) {
           const { isLoggedIn } = await import('./telegram/session');
           if (!publicCmds.has(earlyCmd) && !isLoggedIn(chatId)) {
+            // callback Login while unauth -> send force_reply prompt instead of Welcome
+            if (earlyCmd === 'login' && (body as { callback_query?: { data?: string } })?.callback_query?.data) {
+              logger.warn({ chatId }, 'telegram unauth Login tap — sending force_reply prompt (no DB touch)');
+              res.statusCode = 200;
+              res.end('OK');
+              try {
+                const { buildLoginForceReplyPrompt } = await import('./telegram/commands');
+                const prompt = buildLoginForceReplyPrompt();
+                await sendTelegramMessage(chatId, prompt.text, { replyMarkup: prompt.replyMarkup });
+              } catch {}
+              return;
+            }
             logger.warn({ chatId }, 'telegram blocked — not logged in (no DB touch)');
             res.statusCode = 200;
             res.end('OK');
@@ -370,11 +406,11 @@ function createHttpServer(): import('http').Server {
         const { cmd } = parseCommandText(rawText);
         logger.info({ chatId, cmd: cmd || '(non-command)' }, 'telegram webhook dispatch');
 
-        // Verifying… placeholder for media verify — send typing + instant placeholder then edit per D-11 RESEARCH Pattern 6
+        // Verifying… placeholder only for verify:yes callback (cost gate), not for initial gate photo
         let placeholderId: number | null = null;
-        const mediaBody = body as { message?: { photo?: unknown[]; document?: unknown } };
-        const hasMedia = !!(mediaBody?.message?.photo || mediaBody?.message?.document);
-        if (hasMedia) {
+        const cbDataForPlaceholder = (body as { callback_query?: { data?: string } })?.callback_query?.data ?? '';
+        const isVerifyYes = cbDataForPlaceholder.trim().startsWith('verify:yes:');
+        if (isVerifyYes) {
           try {
             const { isLoggedIn } = await import('./telegram/session');
             if (isLoggedIn(chatId)) {

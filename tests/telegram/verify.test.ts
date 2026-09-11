@@ -326,7 +326,7 @@ describe('telegram verify — parseFreeForm, dedup, pdf/vision gates, determinis
     const resText = typeof res === 'object' && res !== null && 'text' in res ? (res as { text: string }).text : String(res);
     expect(resText).toContain('/login');
 
-    // login then photo with caption that parses locally should succeed
+    // login then photo with caption that parses locally should gate, then Yes verifies
     login(chatId, 'testpassword12345');
     global.fetch = vi.fn(async (url: string) => {
       const u = String(url);
@@ -336,25 +336,38 @@ describe('telegram verify — parseFreeForm, dedup, pdf/vision gates, determinis
     }) as unknown as typeof fetch;
     _setPoolForTests(mockPoolForVerify({ exactRows: [{ amount: '100000', currency: 'NGN', transaction_date: '2026-09-10', sender_name: 'SAMPLE SENDER', description: 'desc', available_balance: '100', branch: null }] }));
     update = { message: { chat: { id: Number(chatId) }, photo: [{ file_id: 'fid_large', file_size: 9000 }], caption: '100k 2026-09-10 SAMPLE SENDER' } };
-    res = await handleTelegramUpdate(update);
-    expect(extractText(res)).toContain('VERIFIED');
+    res = await handleTelegramUpdate(update) as unknown as { text: string; replyMarkup?: unknown } | string;
+    expect(extractText(res)).toContain('Verify this receipt');
+    // simulate tapping Yes
+    {
+      const gate = res as { replyMarkup?: { inline_keyboard?: Array<Array<{ callback_data?: string }>> } };
+      const cbData = gate.replyMarkup?.inline_keyboard?.[0]?.[0]?.callback_data ?? '';
+      expect(cbData).toMatch(/^verify:yes:[0-9a-f]{12}$/);
+      const cbUpdate = { callback_query: { id: 'cq1', data: cbData, message: { chat: { id: Number(chatId) } }, from: { id: Number(chatId) } } };
+      const verifyRes = await handleTelegramUpdate(cbUpdate);
+      expect(extractText(verifyRes)).toContain('VERIFIED');
+    }
 
-    // rate limit: 5/60s — exhaust
+    // rate limit: 5/60s — exhaust via verify:yes callbacks (gate itself not rate-limited)
     _resetRateLimitForTests();
+    const { pendingVerify } = await import('../../src/telegram/commands');
     for (let i = 0; i < 5; i++) {
       update = { message: { chat: { id: Number(chatId) }, photo: [{ file_id: `fid${i}`, file_size: 100 }], caption: `100k 2026-09-10 SAMPLE SENDER${i}` } };
-      // mock new buffer each time to avoid dedup hit returning Already verified but still rate checked first
       global.fetch = vi.fn(async (url: string) => {
         const u = String(url);
         if (u.includes('/getFile')) return { ok: true, json: async () => ({ ok: true, result: { file_path: `photos/${i}.jpg`, file_size: 100 } }) } as unknown as Response;
         if (u.includes('/file/bot')) return { ok: true, arrayBuffer: async () => Buffer.from(`bytes-${i}-${Date.now()}`).buffer } as unknown as Response;
         return { ok: true, json: async () => ({}), arrayBuffer: async () => new ArrayBuffer(0) } as unknown as Response;
       }) as unknown as typeof fetch;
-      await handleTelegramUpdate(update);
+      const gateRes = await handleTelegramUpdate(update) as unknown as { replyMarkup?: { inline_keyboard?: Array<Array<{ callback_data?: string }>> } };
+      const cbData = gateRes.replyMarkup?.inline_keyboard?.[0]?.[0]?.callback_data ?? `verify:yes:${i}`;
+      const cbUpdate = { callback_query: { id: `cq${i}`, data: cbData, message: { chat: { id: Number(chatId) } }, from: { id: Number(chatId) } } };
+      await handleTelegramUpdate(cbUpdate);
     }
-    update = { message: { chat: { id: Number(chatId) }, photo: [{ file_id: 'fid_over', file_size: 100 }], caption: '100k 2026-09-10 SAMPLE SENDER' } };
-    const limited = await handleTelegramUpdate(update);
-    expect(String(limited)).toMatch(/Verify cooling down/);
+    // next verify:yes should be rate-limited
+    pendingVerify.set('ratelimtest1', { fileId: 'fid_over', mime: 'image/jpeg', isPdf: false, chatId, ts: Date.now() });
+    const limited = await handleTelegramUpdate({ callback_query: { id: 'cq_over', data: 'verify:yes:ratelimtest1', message: { chat: { id: Number(chatId) } }, from: { id: Number(chatId) } } });
+    expect(extractText(limited)).toMatch(/Verify cooling down/);
 
     _resetSessionsForTests();
     _resetRateLimitForTests();
