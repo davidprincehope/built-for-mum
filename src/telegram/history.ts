@@ -181,7 +181,7 @@ export async function handleHistoryWithRange(args: string[], opts?: { limit?: nu
           let aiTo: string | null = null;
           try {
             const { openRouterSearchIntent } = await import('./search');
-            const intent = await openRouterSearchIntent(joined);
+            const intent = await withTimeout(openRouterSearchIntent(joined), 5000, null as ReturnType<typeof openRouterSearchIntent> extends Promise<infer T> ? T : never);
             if (intent?.fromDate && intent?.toDate) {
               const vFrom = intent.fromDate;
               const vTo = intent.toDate;
@@ -224,7 +224,7 @@ export async function handleHistoryWithRange(args: string[], opts?: { limit?: nu
         let aiTo: string | null = null;
         try {
           const { openRouterSearchIntent } = await import('./search');
-          const intent = await openRouterSearchIntent(joined);
+          const intent = await withTimeout(openRouterSearchIntent(joined), 5000, null as ReturnType<typeof openRouterSearchIntent> extends Promise<infer T> ? T : never);
           if (intent?.fromDate && intent?.toDate && /^\d{4}-\d{2}-\d{2}$/.test(intent.fromDate) && /^\d{4}-\d{2}-\d{2}$/.test(intent.toDate) && intent.fromDate <= intent.toDate) {
             aiFrom = intent.fromDate; aiTo = intent.toDate;
           }
@@ -256,7 +256,7 @@ export async function handleHistoryWithRange(args: string[], opts?: { limit?: nu
       if (!from && /[A-Za-z]/.test(joined)) {
         try {
           const { openRouterSearchIntent } = await import('./search');
-          const intent = await openRouterSearchIntent(joined);
+          const intent = await withTimeout(openRouterSearchIntent(joined), 5000, null as ReturnType<typeof openRouterSearchIntent> extends Promise<infer T> ? T : never);
           if (intent?.fromDate && intent?.toDate && /^\d{4}-\d{2}-\d{2}$/.test(intent.fromDate) && /^\d{4}-\d{2}-\d{2}$/.test(intent.toDate) && intent.fromDate <= intent.toDate) {
             from = intent.fromDate; to = intent.toDate;
           } else {

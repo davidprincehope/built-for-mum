@@ -506,7 +506,7 @@ export function handleLogs(rawN: number | string | undefined, rawLevel: string |
     fatal: '💀',
   };
 
-  const lines = entries.map((e) => {
+  let lines = entries.map((e) => {
     const time = new Date(e.ts).toISOString().slice(11, 19);
     const emoji = levelEmoji[e.level] ?? '•';
     const lvl = e.level.padEnd(5, ' ');
@@ -515,18 +515,30 @@ export function handleLogs(rawN: number | string | undefined, rawLevel: string |
   });
 
   const header = `📋 <b>Logs</b> <i>(last ${entries.length}${level ? ' • ' + escapeHtml(level) + '+' : ''})</i>`;
-  const table = lines.join('\n');
-  const text = `${header}\n<pre>${escapeHtml(table)}</pre>`;
 
-  let out = text;
-  if (out.length > 3800) out = out.slice(0, 3750) + '\n… truncated';
+  // 4000 cap dropping oldest (keep header + pre boundaries), never trunc mid-line — drop whole lines from top
+  const buildText = (bodyLines: string[]): string => {
+    const table = bodyLines.join('\n');
+    return `${header}\n<pre>${escapeHtml(table)}</pre>`;
+  };
+  let text = buildText(lines);
+  if (text.length > 4000) {
+    // Drop oldest lines until under 4000, keep header length constant
+    const reserve = header.length + '<pre></pre>'.length + 20;
+    while (lines.length > 1 && buildText(lines).length > 4000) {
+      lines.shift();
+    }
+    text = buildText(lines);
+    if (text.length > 4000) text = text.slice(0, 3980) + '\n… truncated';
+  }
+
   const replyMarkup = {
     inline_keyboard: [
       [{ text: '🔄 Refresh logs', callback_data: `/logs ${n}${level ? ' ' + level : ''}`, style: 'primary' }],
       [{ text: '← Back to menu', callback_data: '/help' }],
     ],
   };
-  return { text: out, replyMarkup };
+  return { text, replyMarkup };
 }
 
 // --- poll/watch triggers with polished replies ---
@@ -772,31 +784,59 @@ export async function handleTelegramUpdate(update: unknown): Promise<{ text: str
     }
 
     const text = u?.message?.text?.trim() ?? '';
-    // Slash-less D-16: bare "search ..." and "history ..." when logged in reuse same handlers
+    // Slash-less D-05 Both + D-16: history/search/bare NL without '/' while logged in
     if (text && !text.startsWith('/')) {
+      // Prevent loop with 08-03 gate message
+      if (/^Verify this receipt/i.test(text)) return null;
       const slashlessChatId = String((u.message!.chat?.id ?? u.message!.from?.id ?? '') as string | number);
       if (slashlessChatId) {
         try {
           const { isLoggedIn } = await import('./session');
-          if (isLoggedIn(slashlessChatId)) {
-            if (/^search\s+/i.test(text)) {
-              const queryText = text.slice(6).trim();
-              if (!queryText) return { text: 'Usage: /search <query> e.g. /search last week large transfers or /search SAMPLE SENDER 100k September' };
-              return handleSearchStub(slashlessChatId, [queryText]);
-            }
-            if (/^history\s+/i.test(text)) {
-              const rest = text.slice(7).trim();
-              if (!rest) return { text: 'Usage: /history [from to] — Range Lagos DD/MM/YYYY or YYYY-MM-DD or \'last week\'' };
-              const args2 = rest.split(/\s+/).filter(Boolean);
-              const { handleHistoryWithRange } = await import('./history');
-              return handleHistoryWithRange(args2);
-            }
-            if (/^search$/i.test(text)) {
-              return { text: 'Usage: /search <query> e.g. /search last week large transfers or /search SAMPLE SENDER 100k September' };
-            }
-            if (/^history$/i.test(text)) {
-              return { text: 'Usage: /history [from to] — Range Lagos DD/MM/YYYY or YYYY-MM-DD or \'last week\'' };
-            }
+          const loggedIn = isLoggedIn(slashlessChatId);
+          if (!loggedIn) {
+            // Unauth slash-less still gets Welcome (08-03 auto-prompt supersedes later)
+            return buildWelcomeReply();
+          }
+          // Explicit slash-less prefixes have priority
+          if (/^search\s+/i.test(text)) {
+            const queryText = text.slice(6).trim();
+            if (!queryText) return { text: 'Usage: /search <query> e.g. /search last week large transfers or /search SAMPLE SENDER 100k September' };
+            const { sendChatAction } = await import('./sendMessage');
+            void sendChatAction(slashlessChatId, 'typing');
+            return handleSearchStub(slashlessChatId, [queryText]);
+          }
+          if (/^history\s+/i.test(text)) {
+            const rest = text.slice(7).trim();
+            if (!rest) return { text: 'Usage: /history [from to] — Range Lagos DD/MM/YYYY or YYYY-MM-DD or \'last week\'' };
+            const args2 = rest.split(/\s+/).filter(Boolean);
+            const { sendChatAction } = await import('./sendMessage');
+            void sendChatAction(slashlessChatId, 'typing');
+            const { handleHistoryWithRange } = await import('./history');
+            return handleHistoryWithRange(args2);
+          }
+          if (/^search$/i.test(text)) {
+            return { text: 'Usage: /search <query> e.g. /search last week large transfers or /search SAMPLE SENDER 100k September' };
+          }
+          if (/^history$/i.test(text)) {
+            return { text: 'Usage: /history [from to] — Range Lagos DD/MM/YYYY or YYYY-MM-DD or \'last week\'' };
+          }
+          // Bare history single token: month name, last week/today, single date
+          const bareLower = text.trim().toLowerCase();
+          const monthOnly = /^(january|february|march|april|may|june|july|august|september|october|november|december)$/i.test(text.trim());
+          const singleDate = /^\d{4}-\d{2}-\d{2}$/.test(text.trim()) || /^\d{2}\/\d{2}\/\d{4}$/.test(text.trim());
+          const lastWeekToday = /^(last week|today|this month)$/i.test(text.trim());
+          if (monthOnly || singleDate || lastWeekToday) {
+            const { sendChatAction } = await import('./sendMessage');
+            void sendChatAction(slashlessChatId, 'typing');
+            const { handleHistoryWithRange } = await import('./history');
+            return handleHistoryWithRange([text.trim()]);
+          }
+          // Bare NL search fallback: length >=2, not greeting, not matched above
+          const bareQ = text.trim();
+          if (bareQ.length >= 2 && !/^(hi|hello|hey|thanks|thank you|ok|yes|no)$/i.test(bareQ)) {
+            const { sendChatAction } = await import('./sendMessage');
+            void sendChatAction(slashlessChatId, 'typing');
+            return handleSearchStub(slashlessChatId, [bareQ]);
           }
         } catch {}
       }
