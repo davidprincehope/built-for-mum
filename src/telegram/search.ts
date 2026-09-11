@@ -60,12 +60,65 @@ function getWeekAgoRange(): { today: string; weekAgo: string } {
   return { today, weekAgo };
 }
 
-export async function openRouterSearchIntent(nlQuery: string): Promise<SearchIntent | null> {
-  const key = process.env.OPENROUTER_API_KEY ?? '';
-  if (!key) return null;
-  if (!nlQuery || !nlQuery.trim()) return null;
-  const { today, weekAgo } = getWeekAgoRange();
-  const prompt = `Today is ${today} (Africa/Lagos, YYYY-MM-DD). Extract intent from query "${nlQuery}" into JSON {sender?:string,minAmount?:number,maxAmount?:number,fromDate?:string (YYYY-MM-DD),toDate?:string} — last week means ${weekAgo} to ${today}. Large means minAmount 500000. Return JSON only.`;
+function normalizeCandidate(candidate: Record<string, unknown>): Record<string, unknown> {
+  const normalized: Record<string, unknown> = {};
+  if (candidate.sender != null) normalized.sender = String(candidate.sender).trim() || undefined;
+  if (candidate.Sender != null && !normalized.sender) normalized.sender = String(candidate.Sender).trim() || undefined;
+  if (candidate.minAmount != null) {
+    const v = Number(String(candidate.minAmount).replace(/,/g, ''));
+    if (Number.isFinite(v) && v > 0) normalized.minAmount = v;
+  }
+  if (candidate.min_amount != null && normalized.minAmount == null) {
+    const v = Number(String(candidate.min_amount).replace(/,/g, ''));
+    if (Number.isFinite(v) && v > 0) normalized.minAmount = v;
+  }
+  if (candidate.maxAmount != null) {
+    const v = Number(String(candidate.maxAmount).replace(/,/g, ''));
+    if (Number.isFinite(v) && v > 0) normalized.maxAmount = v;
+  }
+  if (candidate.max_amount != null && normalized.maxAmount == null) {
+    const v = Number(String(candidate.max_amount).replace(/,/g, ''));
+    if (Number.isFinite(v) && v > 0) normalized.maxAmount = v;
+  }
+  if (candidate.fromDate != null) normalized.fromDate = String(candidate.fromDate).trim();
+  else if (candidate.from_date != null) normalized.fromDate = String(candidate.from_date).trim();
+  else if (candidate.from != null) normalized.fromDate = String(candidate.from).trim();
+  if (candidate.toDate != null) normalized.toDate = String(candidate.toDate).trim();
+  else if (candidate.to_date != null) normalized.toDate = String(candidate.to_date).trim();
+  else if (candidate.to != null) normalized.toDate = String(candidate.to).trim();
+  return normalized;
+}
+
+function validateAndSanitize(normalized: Record<string, unknown>): SearchIntent | null {
+  const validated = SearchIntentSchema.safeParse(normalized);
+  if (!validated.success) {
+    const withoutBadDates: Record<string, unknown> = { ...normalized };
+    if (validated.error.issues.some((i) => String(i.path[0]).includes('fromDate'))) delete withoutBadDates.fromDate;
+    if (validated.error.issues.some((i) => String(i.path[0]).includes('toDate'))) delete withoutBadDates.toDate;
+    const second = SearchIntentSchema.safeParse(withoutBadDates);
+    if (second.success) return sanitize(second.data);
+    delete withoutBadDates.minAmount;
+    delete withoutBadDates.maxAmount;
+    const third = SearchIntentSchema.safeParse(withoutBadDates);
+    if (third.success) return sanitize(third.data);
+    return null;
+  }
+  return sanitize(validated.data);
+}
+
+function sanitize(data: SearchIntent): SearchIntent {
+  if (data.sender && data.sender.trim() === '') delete (data as Record<string, unknown>).sender;
+  if (data.minAmount != null && data.maxAmount != null && data.minAmount > data.maxAmount) {
+    const tmp = data.minAmount;
+    data.minAmount = data.maxAmount;
+    data.maxAmount = tmp;
+  }
+  return data;
+}
+
+async function callOpenRouter(model: string, prompt: string, key: string, timeoutMs = 8000): Promise<SearchIntent | null> {
+  const controller = new AbortController();
+  const tid = setTimeout(() => controller.abort(), timeoutMs);
   try {
     const res = await fetch(OPENROUTER_URL, {
       method: 'POST',
@@ -76,24 +129,24 @@ export async function openRouterSearchIntent(nlQuery: string): Promise<SearchInt
         'X-Title': TITLE,
       },
       body: JSON.stringify({
-        model: 'google/gemma-3-27b-it',
+        model,
         messages: [{ role: 'user', content: prompt }],
         response_format: { type: 'json_object' },
         temperature: 0,
         max_tokens: 200,
       }),
+      signal: controller.signal,
     });
-    if (res.status === 429 || res.status >= 500) {
-      logger.warn({ status: res.status }, 'openRouterSearchIntent rate/error fallback to local');
-      return null;
-    }
-    if (!res.ok) {
-      logger.warn({ status: res.status }, 'openRouterSearchIntent non-ok fallback');
+    if (res.status === 429 || res.status >= 500 || !res.ok) {
+      logger.warn({ status: res.status, model }, 'openRouter call rate/error fallback');
       return null;
     }
     const j = (await res.json()) as { choices?: Array<{ message?: { content?: string } }> };
     const content = j.choices?.[0]?.message?.content ?? '';
-    if (!content) return null;
+    if (!content || !content.trim()) {
+      logger.warn({ model }, 'openRouter empty content fallback');
+      return null;
+    }
     let parsed: unknown;
     try {
       parsed = JSON.parse(content.trim());
@@ -107,64 +160,40 @@ export async function openRouterSearchIntent(nlQuery: string): Promise<SearchInt
       }
     }
     const candidate = parsed as Record<string, unknown>;
-    // Accept various casings: coerce
-    const normalized: Record<string, unknown> = {};
-    if (candidate.sender != null) normalized.sender = String(candidate.sender).trim() || undefined;
-    if (candidate.Sender != null && !normalized.sender) normalized.sender = String(candidate.Sender).trim() || undefined;
-    if (candidate.minAmount != null) {
-      const v = Number(String(candidate.minAmount).replace(/,/g, ''));
-      if (Number.isFinite(v) && v > 0) normalized.minAmount = v;
-    }
-    if (candidate.min_amount != null && normalized.minAmount == null) {
-      const v = Number(String(candidate.min_amount).replace(/,/g, ''));
-      if (Number.isFinite(v) && v > 0) normalized.minAmount = v;
-    }
-    if (candidate.maxAmount != null) {
-      const v = Number(String(candidate.maxAmount).replace(/,/g, ''));
-      if (Number.isFinite(v) && v > 0) normalized.maxAmount = v;
-    }
-    if (candidate.max_amount != null && normalized.maxAmount == null) {
-      const v = Number(String(candidate.max_amount).replace(/,/g, ''));
-      if (Number.isFinite(v) && v > 0) normalized.maxAmount = v;
-    }
-    if (candidate.fromDate != null) normalized.fromDate = String(candidate.fromDate).trim();
-    else if (candidate.from_date != null) normalized.fromDate = String(candidate.from_date).trim();
-    else if (candidate.from != null) normalized.fromDate = String(candidate.from).trim();
-    if (candidate.toDate != null) normalized.toDate = String(candidate.toDate).trim();
-    else if (candidate.to_date != null) normalized.toDate = String(candidate.to_date).trim();
-    else if (candidate.to != null) normalized.toDate = String(candidate.to).trim();
-
-    // validate via zod
-    const validated = SearchIntentSchema.safeParse(normalized);
-    if (!validated.success) {
-      // try to keep only valid subset
-      // For invalid dates (e.g. not YYYY-MM-DD), drop them and revalidate without dates
-      const withoutBadDates: Record<string, unknown> = { ...normalized };
-      if (validated.error.issues.some((i) => String(i.path[0]).includes('fromDate'))) delete withoutBadDates.fromDate;
-      if (validated.error.issues.some((i) => String(i.path[0]).includes('toDate'))) delete withoutBadDates.toDate;
-      const second = SearchIntentSchema.safeParse(withoutBadDates);
-      if (second.success) return second.data;
-      // if still invalid due to amounts, drop amounts too
-      delete withoutBadDates.minAmount;
-      delete withoutBadDates.maxAmount;
-      const third = SearchIntentSchema.safeParse(withoutBadDates);
-      if (third.success) return third.data;
+    const normalized = normalizeCandidate(candidate);
+    const result = validateAndSanitize(normalized);
+    if (!result || Object.keys(result).length === 0) {
+      // empty intent treated as no useful extraction
       return null;
     }
-    // sanitize empty
-    const data = validated.data;
-    if (data.sender && data.sender.trim() === '') delete (data as Record<string, unknown>).sender;
-    if (data.minAmount != null && (data.maxAmount != null && data.minAmount > data.maxAmount)) {
-      // swap if misordered?
-      const tmp = data.minAmount;
-      data.minAmount = data.maxAmount;
-      data.maxAmount = tmp;
-    }
-    return data;
+    return result;
   } catch (e) {
-    logger.warn({ err: e }, 'openRouterSearchIntent failed fallback');
+    const msg = (e as Error)?.message ?? '';
+    if (/abort/i.test(msg)) logger.warn({ model }, 'openRouter timeout fallback');
+    else logger.warn({ err: e, model }, 'openRouter call failed fallback');
     return null;
+  } finally {
+    clearTimeout(tid);
   }
+}
+
+export async function openRouterSearchIntentWithFallback(nlQuery: string): Promise<SearchIntent | null> {
+  const key = process.env.OPENROUTER_API_KEY ?? '';
+  if (!key) return null;
+  if (!nlQuery || !nlQuery.trim()) return null;
+  const { today, weekAgo } = getWeekAgoRange();
+  const prompt = `Today is ${today} (Africa/Lagos, YYYY-MM-DD). Extract intent from query "${nlQuery}" into JSON {sender?:string,minAmount?:number,maxAmount?:number,fromDate?:string (YYYY-MM-DD),toDate?:string} — last week means ${weekAgo} to ${today}. Large means minAmount 500000. Return JSON only.`;
+  const primary = await callOpenRouter('google/gemma-3-27b-it', prompt, key, 8000);
+  if (primary && Object.keys(primary).length > 0) return primary;
+  logger.warn('gemma fallback escalating to gemini-2.0-flash-001');
+  const fallback = await callOpenRouter('google/gemini-2.0-flash-001', prompt, key, 8000);
+  if (fallback && Object.keys(fallback).length > 0) return fallback;
+  return null;
+}
+
+// Backward compat alias — delegates to fallback chain
+export async function openRouterSearchIntent(nlQuery: string): Promise<SearchIntent | null> {
+  return openRouterSearchIntentWithFallback(nlQuery);
 }
 
 // --- local keyword fallback per plan ---
@@ -305,10 +334,10 @@ export async function handleSearch(
   const offset = Math.max(0, Math.floor(opts.offset ?? 0));
   const limit = 5;
 
-  // intent: try OpenRouter, fallback to local
+  // intent: try OpenRouter (gemma→gemini), fallback to local
   let intent: SearchIntent | null = null;
   try {
-    intent = await openRouterSearchIntent(q);
+    intent = await openRouterSearchIntentWithFallback(q);
   } catch {
     intent = null;
   }
@@ -359,24 +388,55 @@ export async function handleSearch(
   );
   const total = Number((countResult as { rows: Array<{ count: string }> }).rows[0]?.count ?? '0');
 
+  const orderBy = senderParam
+    ? `ORDER BY similarity(sender_name, $1) DESC NULLS LAST, transaction_date DESC, transaction_time DESC, created_at DESC`
+    : `ORDER BY transaction_date DESC, transaction_time DESC, created_at DESC`;
+
   const rowsFallback = { rows: [] } as unknown as import('pg').QueryResult<never>;
-  const rowsResult = await withTimeout(
-    pool.query<{
-      amount: string;
-      currency: string;
-      transaction_date: string;
-      transaction_time: string;
-      sender_name: string;
-      description: string;
-      available_balance: string;
-      branch: string | null;
-    }>(
-      `SELECT amount::text,currency,transaction_date::text,transaction_time::text,sender_name,description,available_balance::text,branch FROM transactions ${whereClause} ORDER BY transaction_date DESC, created_at DESC LIMIT 5 OFFSET $6`,
-      [senderParam, minAmountParam, maxAmountParam, fromDateParam, toDateParam, offset],
-    ),
-    5000,
-    rowsFallback,
-  );
+  let rowsResult: unknown;
+  try {
+    rowsResult = await withTimeout(
+      pool.query<{
+        amount: string;
+        currency: string;
+        transaction_date: string;
+        transaction_time: string;
+        sender_name: string;
+        description: string;
+        available_balance: string;
+        branch: string | null;
+      }>(
+        `SELECT amount::text,currency,transaction_date::text,transaction_time::text,sender_name,description,available_balance::text,branch FROM transactions ${whereClause} ${orderBy} LIMIT 5 OFFSET $6`,
+        [senderParam, minAmountParam, maxAmountParam, fromDateParam, toDateParam, offset],
+      ),
+      5000,
+      rowsFallback,
+    );
+  } catch (e) {
+    const msg = String((e as Error)?.message ?? '');
+    if (senderParam && /similarity|function.*does not exist|pg_trgm/i.test(msg)) {
+      logger.warn({ err: e }, 'similarity ORDER BY failed — fallback to date');
+      rowsResult = await withTimeout(
+        pool.query<{
+          amount: string;
+          currency: string;
+          transaction_date: string;
+          transaction_time: string;
+          sender_name: string;
+          description: string;
+          available_balance: string;
+          branch: string | null;
+        }>(
+          `SELECT amount::text,currency,transaction_date::text,transaction_time::text,sender_name,description,available_balance::text,branch FROM transactions ${whereClause} ORDER BY transaction_date DESC, transaction_time DESC, created_at DESC LIMIT 5 OFFSET $6`,
+          [senderParam, minAmountParam, maxAmountParam, fromDateParam, toDateParam, offset],
+        ),
+        5000,
+        rowsFallback,
+      );
+    } else {
+      throw e;
+    }
+  }
   const rows = (rowsResult as { rows: Array<Record<string, string>> }).rows ?? [];
 
   if (!rows || rows.length === 0) {
