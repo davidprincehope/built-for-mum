@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { getPool } from '../db/pool';
 import { getHistoryId, getLastProcessedAt, getPollAfterMs, getWatchExpiration } from '../db/health';
 import { checkStaleness } from '../observability/staleness';
@@ -7,6 +8,10 @@ import { isRateLimited } from './rateLimit';
 import { sendTelegramMessage, escapeHtml } from './sendMessage';
 import { parseCommandText } from './webhook';
 import { formatNaira } from './naira';
+
+// D-06 Ask-with-button gate: short hash map TTL 5min
+export const pendingVerify = new Map<string, { fileId: string; mime?: string; isPdf: boolean; chatId: string; ts: number }>();
+export function _resetPendingVerifyForTests(): void { pendingVerify.clear(); }
 
 // --- helpers ---
 
@@ -699,11 +704,53 @@ export async function handleTelegramUpdate(update: unknown): Promise<{ text: str
       const data = u.callback_query.data.trim();
       const chatId = String((u.callback_query.message?.chat?.id ?? u.callback_query.from?.id ?? '') as string | number);
       const cqId = (u.callback_query as { id?: string }).id;
+      const originMessageId = (u.callback_query as { message?: { message_id?: number } }).message?.message_id;
+      // Intercept verify gate before generic dispatch
+      if (data.startsWith('verify:')) {
+        if (cqId) {
+          try { const { answerCallbackQuery } = await import('./sendMessage'); await answerCallbackQuery(cqId); } catch {}
+        }
+        const parts = data.split(':');
+        const action = parts[1];
+        const key = parts[2];
+        if (action === 'yes' && key) {
+          const entry = pendingVerify.get(key);
+          if (!entry) return '⚠️ Receipt expired — please resend the image.';
+          pendingVerify.delete(key);
+          if (cqId) { try { const { answerCallbackQuery } = await import('./sendMessage'); await answerCallbackQuery(cqId); } catch {} }
+          // send Verifying placeholder via worker; here return Verifying then edit via worker path — but for direct handler also support immediate verify
+          // To keep worker placeholder flow consistent, we do NOT send placeholder here; worker will handle placeholder if media path used
+          // However for gate callback we need to run verify now and let worker edit placeholder if present (worker sends placeholder for media, not for gate)
+          // So handleVerify directly; worker will also handle edit if it sent placeholder for this callback? callbacks have no placeholder
+          // For callback path, rate limit check
+          if (isRateLimited(chatId, 'verify', 5, 60_000)) return '⏳ Slow down — Verify cooling down, retry in ~30s. Tip: try again shortly';
+          try {
+            const { handleVerify } = await import('./verify');
+            const reply = await handleVerify({ chatId, fileId: entry.fileId, mime: entry.mime, isPdf: entry.isPdf });
+            if (typeof reply === 'string') return reply;
+            return reply as { text: string; replyMarkup?: unknown };
+          } catch (e) {
+            logger.warn({ err: e, chatId }, 'verify:yes handleVerify failed');
+            return '⚠️ Verify failed — try again';
+          }
+        }
+        if (action === 'no' && key) {
+          pendingVerify.delete(key);
+          if (originMessageId) {
+            try {
+              const { editTelegramMessage } = await import('./sendMessage');
+              await editTelegramMessage(chatId, originMessageId, '❌ Cancelled — receipt not verified');
+              return null;
+            } catch {}
+          }
+          return '❌ Cancelled — receipt not verified';
+        }
+        return null;
+      }
       if (cqId) {
         try {
           const { answerCallbackQuery, sendChatAction } = await import('./sendMessage');
           await answerCallbackQuery(cqId);
-          // show typing while we process the tap (handler may hit DB/OpenRouter)
           void sendChatAction(chatId, 'typing');
         } catch {}
       }
@@ -754,32 +801,25 @@ export async function handleTelegramUpdate(update: unknown): Promise<{ text: str
       }
 
       if (fileId) {
-        const caption = msg.caption?.trim() ?? '';
-        // caption may contain "/verify ..." — strip prefix if present
-        let captionForVerify: string | undefined = caption || undefined;
-        if (captionForVerify && captionForVerify.startsWith('/verify')) {
-          const { args } = parseCommandText(captionForVerify);
-          captionForVerify = args.join(' ') || undefined;
-        }
-        // If caption empty and isPdf false and photo, allow verify with no caption (will hit vision)
+        // D-06 gate: never auto-verify — ask with button, store under short hash TTL 5min
+        const shortKey = createHash('sha256').update(fileId).digest('hex').slice(0, 12);
+        pendingVerify.set(shortKey, { fileId, mime, isPdf, chatId, ts: Date.now() });
+        setTimeout(() => pendingVerify.delete(shortKey), 5 * 60 * 1000).unref();
         try {
           const { sendChatAction } = await import('./sendMessage');
           void sendChatAction(chatId, 'typing');
         } catch {}
-        try {
-          const { handleVerify } = await import('./verify');
-          const reply = await handleVerify({
-            chatId,
-            fileId,
-            mime,
-            caption: captionForVerify,
-            isPdf,
-          });
-          return reply;
-        } catch (e) {
-          logger.warn({ err: e, chatId }, 'handleTelegramUpdate media verify failed');
-          return '⚠️ Verify failed — try again';
-        }
+        return {
+          text: '🧾 <b>Verify this receipt?</b>\n<i>Tap Yes to run verification — costs apply via OpenRouter vision.</i>',
+          replyMarkup: {
+            inline_keyboard: [
+              [
+                { text: '✅ Yes, verify', callback_data: `verify:yes:${shortKey}` },
+                { text: '❌ No', callback_data: `verify:no:${shortKey}` },
+              ],
+            ],
+          },
+        };
       }
     }
 
