@@ -8,7 +8,7 @@ Ledger Assistant reads Zenith Bank transaction-notification emails from Gmail, c
 
 ## Demo
 
-[▶ Watch the demo video](generated_video.mp4)
+![Ledger Assistant demo](demo.gif)
 
 ## Requirements
 
