@@ -26,7 +26,7 @@ export interface SenderResult {
 }
 
 // Masked account pattern per D-08 — stored as-is, never de-masked
-const MASKED_ACCOUNT_RE = /101\*{2,}\d+/; // e.g. 999****999
+const MASKED_ACCOUNT_RE = /\d{3}\*{2,}\d+/; // e.g. 999****999
 
 const CHARGE_KEYWORDS = new Set([
   'vat',

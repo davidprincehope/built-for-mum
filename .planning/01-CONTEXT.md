@@ -86,7 +86,7 @@ Phase 1 delivers a trustworthy, continuously-monitored `transactions` transactio
 
 ## Specific Ideas
 
-- Cooperative name surfaces in NIP narration examples (e.g. `App To Zenith Bank EXAMPLE COOPERATIVE SOCIETY`, `To EXAMPLE S.`, `KIP ZENITH/9999999999`) — confirms the connected inbox belongs to Example Cooperative Society; filter logic should not assume narration always contains that string, but examples suggest it often will.
+- Cooperative name surfaces in NIP narration examples (e.g. `App To Zenith Bank EXAMPLE COOPERATIVE SOCIETY`, `To EXAMPLE S.`, `KIP ZENITH/9999999999`) — confirms the connected inbox belongs to Example Project Cooperative Society; filter logic should not assume narration always contains that string, but examples suggest it often will.
 - Description sender extraction examples are literal: `CIP CR/ SAMPLE ACCOUNT HOLDER/Transfer from SAMPLE ACCOUNT HOLDER` → sender is text between `CIP CR/` and first `/`; important edge cases include amounts like `100,000.00` with commas, date `DD/MM/YYYY`, and masked accounts.
 - No specific UI/UX references — Phase 1 is backend-only (worker + DB), no user-visible surface.
 

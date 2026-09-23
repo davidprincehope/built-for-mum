@@ -11,7 +11,7 @@ describe('extractSender — four families per zenith_bank_email_format.md', () =
   });
 
   it('CIP CR/ with varied spacing still extracts', () => {
-    expect(extractSender('CIP CR/EXAMPLE ACCOUNT HOLDER/Transfer from GBENGA').senderName).toBe('EXAMPLE ACCOUNT HOLDER');
+    expect(extractSender('CIP CR/EXAMPLE ACCOUNT HOLDER/Transfer from EXAMPLE').senderName).toBe('EXAMPLE ACCOUNT HOLDER');
     expect(extractSender('CIP CR/ EXAMPLE ACCOUNT HOLDER/Transfer from EXAMPLE ACCOUNT HOLDER').family).toBe('CIP_CR');
   });
 
@@ -21,10 +21,10 @@ describe('extractSender — four families per zenith_bank_email_format.md', () =
     expect(r.family).toBe('NIP');
   });
 
-  it('NIP/KBL/TRF BO SAMPLE TRANSFER SENDER ISREAL /KIP ZENITH/9999999999 → TRF BO... (between bank code and second slash)', () => {
-    const r = extractSender('NIP/KBL/TRF BO SAMPLE TRANSFER SENDER ISREAL /KIP ZENITH/9999999999');
+  it('NIP/KBL/TRF BO SAMPLE TRANSFER SENDER EXAMPLE /KIP ZENITH/9999999999 → TRF BO... (between bank code and second slash)', () => {
+    const r = extractSender('NIP/KBL/TRF BO SAMPLE TRANSFER SENDER EXAMPLE /KIP ZENITH/9999999999');
     expect(r.family).toBe('NIP');
-    expect(r.senderName).toBe('TRF BO SAMPLE TRANSFER SENDER ISREAL');
+    expect(r.senderName).toBe('TRF BO SAMPLE TRANSFER SENDER EXAMPLE');
   });
 
   it('NIP/ABN/EXAMPLE SENDER/MOBILE TRF TO ZIB ... → EXAMPLE SENDER', () => {
@@ -76,7 +76,7 @@ describe('extractSender — four families per zenith_bank_email_format.md', () =
     const src = fs.readFileSync('src/zenith/sender.ts', 'utf-8');
     // Should not have replace removing * or logic to expand masked account
     // But should preserve masked pattern
-    const r = extractSender('NIP/KBL/TRF BO SAMPLE TRANSFER SENDER ISREAL /KIP ZENITH/9999999999');
+    const r = extractSender('NIP/KBL/TRF BO SAMPLE TRANSFER SENDER EXAMPLE /KIP ZENITH/9999999999');
     // senderName should not contain the masked 999****999 de-masked
     // The reference 9999999999 is unmasked in NIP example — that's sender-side account, not masked zenith account
     // Ensure the zenith masked account 999****999 is stored as-is elsewhere (not in sender extraction)
@@ -85,7 +85,7 @@ describe('extractSender — four families per zenith_bank_email_format.md', () =
     // Verify source doesn't contain de-mask replacement
     expect(src).not.toMatch(/replace.*\*.*\d/);
     // Also verify validation test preserves stars
-    expect('999****999').toMatch(/101\*{4}877/);
+    expect('999****999').toMatch(/999\*{4}999/);
   });
 
   it('empty description → UNKNOWN with empty senderName', () => {

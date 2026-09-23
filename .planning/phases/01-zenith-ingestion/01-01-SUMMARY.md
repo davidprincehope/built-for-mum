@@ -156,7 +156,7 @@ Each task was committed atomically (no git repo — files created directly; equi
 
 **Plan metadata:** `01-01-SUMMARY.md` (docs: complete plan) — no git repo at project root, so no commit hash (commit_docs disabled / gitless workspace)
 
-_Note: No git repository exists at C:/Users/user/Documents/Example Project — sequential executor writes SUMMARY.md and files without git commits per instructions._
+_Note: No git repository exists at path/to/repository — sequential executor writes SUMMARY.md and files without git commits per instructions._
 
 ## Files Created/Modified
 

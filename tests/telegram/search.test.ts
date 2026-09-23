@@ -73,7 +73,7 @@ describe('telegram search — openRouter intent + parameterized GIN SQL + pagina
         ok: true,
         status: 200,
         json: async () => ({
-          choices: [{ message: { content: JSON.stringify({ sender: 'SAMPLE SENDER', minAmount: 500000, fromDate: weekAgoStr, toDate: todayStr }) } }],
+          choices: [{ message: { content: JSON.stringify({ sender: 'Sample', minAmount: 500000, fromDate: weekAgoStr, toDate: todayStr }) } }],
         }),
       } as unknown as Response;
     }) as unknown as typeof fetch;
@@ -105,11 +105,11 @@ describe('telegram search — openRouter intent + parameterized GIN SQL + pagina
     expect(intent.toDate).toBeDefined();
   });
 
-  it('localKeywordIntent extracts 100k -> minAmount 100000 and sender SAMPLE SENDER', async () => {
+  it('localKeywordIntent extracts 100k -> minAmount 100000 and sender Sample', async () => {
     const { localKeywordIntent } = await import('../../src/telegram/search');
-    const intent = localKeywordIntent('SAMPLE SENDER 100k September');
+    const intent = localKeywordIntent('Sample 100k September');
     expect(intent.minAmount).toBe(100000);
-    expect(intent.sender?.toLowerCase()).toContain('SAMPLE SENDER');
+    expect(intent.sender?.toLowerCase()).toContain('sample');
   });
 
   it('handleSearch uses fallback when OPENROUTER missing and builds parameterized SQL never concatenates', async () => {
@@ -120,8 +120,8 @@ describe('telegram search — openRouter intent + parameterized GIN SQL + pagina
     ];
     _setPoolForTests(mockPoolForSearch({ count: '1', rows, capture }));
     const { handleSearch } = await import('../../src/telegram/search');
-    const res = await handleSearch('SAMPLE SENDER 100k', { offset: 0 });
-    expect(res.text).toContain('SAMPLE SENDER');
+    const res = await handleSearch('Sample 100k', { offset: 0 });
+    expect(res.text).toContain('SAMPLE');
     expect(res.text).toContain('Found 1 matching');
     expect(res.text.length).toBeLessThan(4096);
     // Verify parameterized SQL uses $ placeholders not interpolation
@@ -133,10 +133,10 @@ describe('telegram search — openRouter intent + parameterized GIN SQL + pagina
     // params should be properly bound, sender non-null
     const params = capture.params.find((p) => p.length === 6)!;
     expect(typeof params[0]).toBe('string'); // sender
-    expect(params[0]).toMatch(/SAMPLE SENDER/i);
+    expect(params[0]).toMatch(/sample/i);
     expect(params[5]).toBe(0); // offset
     // ensure no SQL injection via quoted sender concat
-    expect(selectSql).not.toContain('SAMPLE SENDER');
+    expect(selectSql).not.toContain('Sample');
     _setPoolForTests(null);
   });
 
@@ -228,7 +228,7 @@ describe('telegram search — openRouter intent + parameterized GIN SQL + pagina
       return { ok: true, json: async () => ({ choices: [] }) } as unknown as Response;
     }) as unknown as typeof fetch;
     const { handleSearchStub } = await import('../../src/telegram/commands');
-    const res = await handleSearchStub('unauth999', ['SAMPLE SENDER 100k']);
+    const res = await handleSearchStub('unauth999', ['Sample 100k']);
     expect(res.text).toContain('/login');
     expect(dbTouched).toBe(false);
     expect(openRouterTouched).toBe(false);
