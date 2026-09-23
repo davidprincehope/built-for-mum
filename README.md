@@ -1,8 +1,14 @@
-# Payment Verification
+# Ledger Assistant
 
-A Node.js/TypeScript worker that reads Zenith Bank transaction-notification emails from Gmail, checks the sender/authentication information, parses and validates transaction fields, and stores accepted transactions in PostgreSQL. It also provides an optional Telegram bot for viewing and searching the ledger, checking worker status, and verifying a receipt against stored transactions.
+Every month, my mum has to scan through hundreds of receipts to verify transactions. It is repetitive, time-consuming, and stressful, so I built this tool to make the process easier. This is the first step toward using AI to automate more of her business and give her more time to focus on the work that matters.
+
+Ledger Assistant reads Zenith Bank transaction-notification emails from Gmail, checks and records the transaction details, and makes them easy to search. Through Telegram, my mum can send a receipt photo or PDF and chat with an interactive assistant to verify receipts, search transactions, and explore her business ledger. AI features use cost-conscious models through OpenRouter, including Google Gemini 3 Flash for receipt images and Gemma 3 27B for natural-language search.
 
 > This repository contains software, not a hosted service. You must configure your own Gmail, database, and (if using the bot) Telegram credentials. Never commit real credentials, customer data, bank statements, email exports, or production logs.
+
+## Demo
+
+[▶ Watch the demo video](generated_video.mp4)
 
 ## Requirements
 
@@ -160,4 +166,3 @@ migrations/       PostgreSQL schema migrations
 tests/            Automated tests and synthetic email fixtures
 scripts/          Operational and Gmail diagnostic scripts
 ```
-
