@@ -6,7 +6,6 @@ Ledger Assistant reads Zenith Bank transaction-notification emails from Gmail, c
 
 > This repository contains software, not a hosted service. You must configure your own Gmail, database, and (if using the bot) Telegram credentials. Never commit real credentials, customer data, bank statements, email exports, or production logs.
 
-## Demo
 
 ![Ledger Assistant demo](demo.gif)
 
