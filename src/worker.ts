@@ -406,11 +406,11 @@ function createHttpServer(): import('http').Server {
         const { cmd } = parseCommandText(rawText);
         logger.info({ chatId, cmd: cmd || '(non-command)' }, 'telegram webhook dispatch');
 
-        // Verifying… placeholder only for verify:yes callback (cost gate), not for initial gate photo
+        // Verifying… placeholder for incoming media (photo/document) — auto-verified on receipt
         let placeholderId: number | null = null;
-        const cbDataForPlaceholder = (body as { callback_query?: { data?: string } })?.callback_query?.data ?? '';
-        const isVerifyYes = cbDataForPlaceholder.trim().startsWith('verify:yes:');
-        if (isVerifyYes) {
+        const incomingMsg = (body as { message?: { photo?: unknown; document?: unknown } })?.message;
+        const isMediaMessage = !!(incomingMsg && (incomingMsg.photo || incomingMsg.document));
+        if (isMediaMessage) {
           try {
             const { isLoggedIn } = await import('./telegram/session');
             if (isLoggedIn(chatId)) {
